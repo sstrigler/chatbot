@@ -1,0 +1,1267 @@
+#!/bin/sh
+#-*-Perl-*-
+
+exec perl -x $0 "$@";
+
+#!perl
+
+##############################################################################
+#
+# ChatBot - Jabber ChatBot
+#
+#   ChatBot is a Jabber based bot that is designed to sit in chatrooms and
+# be an interactive resource.  The new design is modular and has a plugin
+# architecture that allows for easy development of new functions.
+#
+##############################################################################
+
+use Net::Jabber 1.27 qw( Client );
+use Getopt::Long;
+use POSIX;
+use strict;
+use Cwd;
+use Time::Local;
+
+my $VERSION = "2.0";
+
+##############################################################################
+#
+# Setup the signals so that we can ctrl-c ChatBot and have him shut down
+# gracefully.
+#
+##############################################################################
+$SIG{HUP} = \&Stop;
+$SIG{KILL} = \&Stop;
+$SIG{TERM} = \&Stop;
+$SIG{INT} = \&Stop;
+
+##############################################################################
+#
+# Get the startup options
+#
+##############################################################################
+my %optctl = ();
+$optctl{debug} = -1;
+$optctl{register} = 0;
+$optctl{config} = "";
+&GetOptions(\%optctl,"debug=i","config=s","register","help","version");
+$optctl{config} = "config.xml" unless ($optctl{config} ne "");
+
+&usage() if ($optctl{help});
+&version() if ($optctl{version});
+
+if (!(-f $optctl{config}))
+{
+    print STDERR "ERROR: Config file cannot be found:\n";
+    print STDERR "          $optctl{config}\n";
+    exit(1);
+}
+
+
+##############################################################################
+#
+# Create the debug object.
+#
+##############################################################################
+my $Debug = new Net::Jabber::Debug(level=>$optctl{debug},
+                                   header=>"ChatBot");
+
+
+##############################################################################
+#
+# Delcare global variables
+#
+##############################################################################
+use vars qw ( %config %plugin_env $Client );
+
+$Client = new Net::Jabber::Client(debuglevel=>$optctl{debug});
+
+my %channel;
+my %channels;
+my %active;
+my %current;
+my %plugins;
+my %events;
+my %timingevents;
+my @timingevents;
+my %flags;
+my %browse_requests;
+
+
+##############################################################################
+#
+# Load the config, the channels, and the plugins
+#
+##############################################################################
+&readConfigXML();
+&LoadPlugins();
+
+&loadChannelsXML();
+
+&TriggerEvent("startup");
+
+my %connect_hash;
+$connect_hash{hostname} = $config{jabber}->{server};
+$connect_hash{port} = $config{jabber}->{port}
+    if (exists($config{jabber}->{port}));
+$connect_hash{connectiontype} = $config{jabber}->{connectiontype}
+    if (exists($config{jabber}->{connectiontype}));
+$connect_hash{ssl} = $config{jabber}->{ssl}
+    if (exists($config{jabber}->{ssl}));
+
+
+##############################################################################
+#
+# Start the garabage collector
+#
+##############################################################################
+&ScheduleNextGarbageCollect();
+
+
+##############################################################################
+#
+# Create a Jabber Client, and try to connect to the server
+#
+##############################################################################
+
+$Client->Info(name=>"ChatBot",
+              version=>$VERSION);
+
+$Client->SetCallBacks(presence=>undef,
+                      message=>undef);
+
+$Client->SetXPathCallBacks(
+ '/message'=>\&messageCB,
+ '/iq[@type="result"]/*[@xmlns="jabber:iq:browse"][1]'=>\&iqBrowseResultCB,
+ '/iq[@type="get"]/*[@xmlns="jabber:iq:browse"][1]'=>\&iqBrowseGetCB,
+ '/presence[not(@type)]'=>\&presenceAvailableCB,
+ '/presence[@type="unavailable"]'=>\&presenceUnavailableCB,
+ '/presence[@type="error"]'=>\&presenceErrorCB,
+);
+
+$Client->SetCallBacks(onauth=>\&onAuth,
+                      onprocess=>\&onProcess,
+                      ondisconnect=>\&onDisconnect,
+                      #send=>sub{ my($sid,$xml) = @_;  print "send: $xml\n"; }
+                     );
+my $timeout = time;
+$Client->Execute(%connect_hash,
+                 username=>$config{jabber}->{username},
+                 password=>$config{jabber}->{password},
+                 resource=>$config{jabber}->{resource},
+                 register=>$optctl{register},
+                 processtimeout=>10,
+                );
+
+
+##############################################################################
+#
+# onAuth - after we connect and are sure that we are authed, we need to send
+#          our presence, get our roster, and log into all of our channels.
+#
+##############################################################################
+sub onAuth
+{
+    #-------------------------------------------------------------------------
+    # Send presence and grab the roster so that we can send stuff.
+    #-------------------------------------------------------------------------
+    $Client->PresenceSend();
+    $Client->RosterGet();
+
+    #-------------------------------------------------------------------------
+    # Log into every channel from the channels.xml file.
+    #-------------------------------------------------------------------------
+    foreach my $jid (keys(%channel))
+    {
+        $Client->PresenceSend(to=>$channel{$jid}->{jid});
+        $Debug->Log0("Sent presence to ",$channel{$jid}->{jid}->GetJID("full"));
+    }
+}
+
+
+##############################################################################
+#
+# onProcess - after Process() finishes we need to do somethings to clean house.
+#             Make sure that we are still in channels, trigger timing events,
+#             etc...
+#
+##############################################################################
+sub onProcess
+{    
+    $Debug->Log0("onProcess: ".time);
+    
+    #-------------------------------------------------------------------------
+    # If we got something from the Process... and it's truly been ten seconds...
+    # Then let's do some housekeeping.  (We don't need to do it all that often,
+    # so every ten seconds should be ok.
+    #-------------------------------------------------------------------------
+    if ((time - $timeout) >= 10)
+    {
+        foreach my $jid (keys(%channel))
+        {
+
+            #-----------------------------------------------------------------
+            # If the activity in a channel is older than the timeout from the
+            # config then let's poll and see if the channel is still alive.
+            #-----------------------------------------------------------------
+            if (exists($active{$jid}) &&
+                exists($channel{$jid}->{polled}) &&
+                exists($channel{$jid}->{loggedin}) &&
+                ((time - $active{$jid}) >= ($config{chatbot}->{timeout}*60)) &&
+                ($channel{$jid}->{polled} == 0) &&
+                ($channel{$jid}->{loggedin} == 1))
+            {
+                $Client->MessageSend(to=>$channel{$jid}->{jid},
+                                     type=>"chat",
+                                     body=>"poll",
+                                     thread=>"ChatBotPoll");
+                $channel{$jid}->{polled} = 1;
+                $Debug->Log0("Polling $jid");
+            }
+
+            #-----------------------------------------------------------------
+            # One minute later, if there has been no activity (ie. the poll
+            # never got to us) then mark this channel as being dead, and send
+            # logout from it.  (This may seem silly if the channel is truly
+            # dead, but...  consider that the server may just be lagged, and
+            # the channel is really still alive, just not passing the data in.)
+            #-----------------------------------------------------------------
+            if (exists($channel{$jid}->{requested}) &&
+                exists($active{$jid}) &&
+                ($channel{$jid}->{requested} == 0) &&
+                ((time - $active{$jid}) >= (($config{chatbot}->{timeout}+1)*60))) {
+                $channel{$jid}->{loggedin} = 0;
+                $Debug->Log0("Lost connection to $jid");
+                $Client->PresenceSend(to=>$channel{$jid}->{jid},
+                                      type=>"unavailable");
+                $Debug->Log0("Sending log out command to $jid to try and recover");
+            }
+
+            #-----------------------------------------------------------------
+            # If we are not logged in to this channel and the channel is not
+            # down, not matter how many times we sent the presence in the
+            # past, send it again to join the channel.
+            #-----------------------------------------------------------------
+            if (exists($channel{$jid}->{loggedin}) &&
+                exists($channel{$jid}->{down}) &&
+                ($channel{$jid}->{loggedin} != 1) &&
+                ($channel{$jid}->{down} == 0))
+            {
+                $Client->PresenceSend(to=>$channel{$jid}->{jid});
+                $channel{$jid}->{polled} = 0;
+                $channel{$jid}->{requested} = 1;
+                $Debug->Log0("Sent presence to ",$channel{$jid}->{jid}->GetJID("full"));
+            }
+
+            #-----------------------------------------------------------------
+            # If we are not logged into the channel, and we had previously
+            # gotten an error that told the channel was down, then every few
+            # minutes (as set in the config file <downtime/>) send the
+            # presence.  It's pointless to do this over and over again every
+            # 10 seconds if the server is down.
+            #-----------------------------------------------------------------
+            if (exists($channel{$jid}->{loggedin}) &&
+                exists($channel{$jid}->{down}) &&
+                exists($channel{$jid}->{downtime}) &&
+                ($channel{$jid}->{loggedin} != 1) &&
+                ($channel{$jid}->{down} == 1) &&
+                ((time - $channel{$jid}->{downtime}) >= ($config{chatbot}->{downtime}*60)))
+            {
+                $Client->PresenceSend(to=>$channel{$jid}->{jid});
+                $channel{$jid}->{downtime} = time;
+                $Debug->Log0("Sent presence to down channel ",$channel{$jid}->{jid}->GetJID("full"));
+            }
+        }
+        $timeout = time;
+    }
+    
+    #-------------------------------------------------------------------------
+    # While we are here... see if there is a timing event to trigger.
+    #-------------------------------------------------------------------------
+    &TriggerNextTimingEvent();
+}
+
+
+##############################################################################
+#
+# onDisconnect - We lost the connection.  Clean up the environment and get
+#                ready to reconenct and start back on onAuth().
+#
+##############################################################################
+sub onDisconnect
+{
+    foreach my $jid (keys(%channel))
+    {
+        delete($channel{$jid}->{loggedin});
+        delete($channel{$jid}->{requested});
+        delete($channel{$jid}->{polled});
+        delete($channel{$jid}->{down});
+        delete($channel{$jid}->{downtime});
+        delete($active{$jid}) if exists($active{$jid});
+    }
+}
+
+
+##############################################################################
+#
+# messageCB - handle all of the incoming message for this connection
+#
+##############################################################################
+sub messageCB
+{
+    my $sid = shift;
+    my $message = shift;
+
+    #-------------------------------------------------------------------------
+    # Don't even look at the history messages.  Let the past fade away.
+    #-------------------------------------------------------------------------
+    my @xTags = $message->GetX("jabber:x:delay");
+    return if ($#xTags > -1);
+
+    my $fromJID = $message->GetFrom("jid");
+
+    my $response = "";
+
+    #-------------------------------------------------------------------------
+    # If this is a normal message then trigger the event.  We really don't like
+    # these... but someone aske for them, so we will provide them but put in a
+    # configuration option to turn them off by default. =)
+    #-------------------------------------------------------------------------
+    if (($message->GetType() eq "") || ($message->GetType() eq "normal"))
+    {
+        return unless exists($config{chatbot}->{messages}->{normal});
+        &TriggerEvent("normal_message",$fromJID,$message)
+    }
+
+    #---------------------------------------------------------------------------
+    # If this is a groupchat message then trigger the event, and note the
+    # activity
+    #---------------------------------------------------------------------------
+    if ($message->GetType() eq "groupchat")
+    {
+        return unless exists($config{chatbot}->{messages}->{groupchat});
+        $channel{$fromJID->GetJID()}->{polled} = 0;
+        $active{$fromJID->GetJID()} = time;
+        &TriggerEvent("groupchat_message",$fromJID,$message)
+    }
+
+    #-------------------------------------------------------------------------
+    # If this is a chat message then trigger the event, and check if it's a
+    # a poll message.
+    #-------------------------------------------------------------------------
+    if ($message->GetType() eq "chat")
+    {
+        return unless exists($config{chatbot}->{messages}->{chat});
+
+        $channel{$fromJID->GetJID()}->{polled} = 0;
+        $active{$fromJID->GetJID()} = time;
+        $Debug->Log0("Still logged in to ",$fromJID->GetJID());
+        
+        #---------------------------------------------------------------------
+        # Only chat with people who have resources
+        #---------------------------------------------------------------------
+        return if ($fromJID->GetResource() eq "");
+
+        &TriggerEvent("chat_message",$fromJID,$message)
+    }
+
+    #-------------------------------------------------------------------------
+    # Check for a command.  If we have one, then execute it.
+    #-------------------------------------------------------------------------
+    if ($message->GetBody() =~ /^\s*(\S+)\s*(.*)$/i)
+    {
+        my $command = $1;
+        my $args = $2;
+
+        &TriggerEvent("command_$command",$fromJID,$message,$args);
+    }
+}
+
+
+##############################################################################
+#
+# presenceAvailableCB - handle all of the available presences
+#
+##############################################################################
+sub presenceAvailableCB
+{
+    my $sid = shift;
+    my $presence = shift;
+
+    $Debug->Log1("presenceAvailableCB: xml(",$presence->GetXML(),")");
+
+    my $fromJID = $presence->GetFrom("jid");
+    my $fromID = $fromJID->GetResource();
+
+    #---------------------------------------------------------------------------
+    # Exit if this did not come from one of the channels are logged into.
+    # This cuts down on the amount of processing required by ChatBot.
+    #---------------------------------------------------------------------------
+    return if !exists($channel{$fromJID->GetJID()});
+
+    #-------------------------------------------------------------------------
+    # Trigger an available event
+    #-------------------------------------------------------------------------
+    &TriggerEvent("presence_available",$fromJID,$presence);
+    &TriggerEvent("presence_available_join",$fromJID,$presence)
+        unless exists($current{$fromJID->GetJID()}->{$fromJID->GetResource()});
+
+    #---------------------------------------------------------------------
+    # If the presence came from us, then note it, reset the variables, and
+    # mark that we are in the channel.
+    #---------------------------------------------------------------------
+    if ($fromID eq &ChatBotNick($fromJID->GetJID()))
+    {
+        $channel{$fromJID->GetJID()}->{loggedin} = 1;
+        $channel{$fromJID->GetJID()}->{requested} = 0;
+        $channel{$fromJID->GetJID()}->{error} = 0;
+        $channel{$fromJID->GetJID()}->{down} = 0;
+        $Debug->Log0("Logged in to ",$fromJID->GetJID());
+    }
+    
+    #---------------------------------------------------------------------
+    # Keep track of the current list of users in the channel.
+    #---------------------------------------------------------------------
+    $current{$fromJID->GetJID()}->{$fromJID->GetResource()} = 1;
+    
+    #---------------------------------------------------------------------
+    # This is activity... mark it as such.
+    #---------------------------------------------------------------------
+    $active{$fromJID->GetJID()} = time;
+}
+
+
+##############################################################################
+#
+# presenceUnavailableCB - handle all of the unavailable presences
+#
+##############################################################################
+sub presenceUnavailableCB
+{ 
+    my $sid = shift;
+    my $presence = shift;
+
+    $Debug->Log1("presenceUnavailableCB: xml(",$presence->GetXML(),")");
+
+    my $fromJID = $presence->GetFrom("jid");
+    my $fromID = $fromJID->GetResource();
+
+    #---------------------------------------------------------------------------
+    # Exit if this did not come from one of the channels are logged into.
+    # This cuts down on the amount of processing required by ChatBot.
+    #---------------------------------------------------------------------------
+    return if !exists($channel{$fromJID->GetJID()});
+
+    #-------------------------------------------------------------------------
+    # Trigger an unavailable event
+    #-------------------------------------------------------------------------
+    &TriggerEvent("presence_unavailable",$fromJID,$presence);
+
+    #---------------------------------------------------------------------
+    # If this came from ChatBot... then he isn't logged in anymore. (Uh oh)
+    # Note it so that the main loop can try and rejoin the channel.
+    #---------------------------------------------------------------------
+    if ($fromID eq &ChatBotNick($fromJID->GetJID()))
+    {
+        $channel{$fromJID->GetJID()}->{loggedin} = 0;
+        $Debug->Log0("Logged out from ",$fromJID->GetJID());
+    }
+    
+    #---------------------------------------------------------------------
+    # Keep track of the current list of users in the channel.
+    #---------------------------------------------------------------------
+    delete($current{$fromJID->GetJID()}->{$fromJID->GetResource()});
+    
+    #---------------------------------------------------------------------
+    # This is activity... mark it as such.
+    #---------------------------------------------------------------------
+    $active{$fromJID->GetJID()} = time;
+}
+
+
+##############################################################################
+#
+# presenceErrorCB - handle all of the incoming error presences
+#
+##############################################################################
+sub presenceErrorCB
+{
+    my $sid = shift;
+    my $presence = shift;
+
+    $Debug->Log1("presenceErrorCB: xml(",$presence->GetXML(),")");
+
+    my $fromJID = $presence->GetFrom("jid");
+    my $fromID = $fromJID->GetResource();
+
+    #---------------------------------------------------------------------------
+    # Exit if this did not come from one of the channels are logged into.
+    # This cuts down on the amount of processing required by ChatBot.
+    #---------------------------------------------------------------------------
+    return if !exists($channel{$fromJID->GetJID()});
+
+    #-------------------------------------------------------------------------
+    # We got an error presence.  That means that the groupchat server is hosed
+    # in some way.
+    #-------------------------------------------------------------------------
+    &TriggerEvent("presence_error",$fromJID,$presence);
+    if ($channel{$fromJID->GetJID()}->{error} == 0)
+    {
+        $channel{$fromJID->GetJID()}->{loggedin} = 0;
+        $channel{$fromJID->GetJID()}->{polled} = 0;
+        $channel{$fromJID->GetJID()}->{requested} = 0;
+        $channel{$fromJID->GetJID()}->{error} = 1;
+    }
+    else
+    {
+        $channel{$fromJID->GetJID()}->{down} = 1;
+        $channel{$fromJID->GetJID()}->{downtime} = time;
+    }
+}
+
+
+##############################################################################
+#
+# iqBrowseResultCB - handle all of the incoming iq:browse results
+#
+##############################################################################
+sub iqBrowseResultCB
+{
+    my $sid = shift;
+    my $iq = shift;
+
+    if (exists($browse_requests{$iq->GetID()}))
+    {
+        my $browse = $Client->BrowseParse($iq->GetQuery());
+        &BrowseHandle($iq->GetID(),$browse);
+    }
+}
+
+
+##############################################################################
+#
+# iqBrowseGetCB - handle all of the incoming iq:browse gets
+#
+##############################################################################
+sub iqBrowseGetCB
+{
+    my $sid = shift;
+    my $iq = shift;
+
+    my $reply = $iq->Reply(type=>"result");
+    my $query = $reply->NewQuery("jabber:iq:browse");
+    
+    $query->SetBrowse(category=>"application",
+                      type=>"bot",
+                      jid=>$config{jabber}->{username}."\@".$config{jabber}->{server}."/".$config{jabber}->{resource},
+                      name=>"ChatBot"
+                      );
+
+    foreach my $jid (sort { $a cmp $b } keys(%channel))
+    {
+        $query->AddItem(category=>"conference",
+                        jid=>$jid,
+                        name=>&ChatBotNick($jid),
+                        type=>"public"
+                       );
+    }
+
+    $Client->Send($reply);
+}
+
+
+##############################################################################
+#
+# readConfigXML - read the config.xml file, parse it, and set config hash
+#                 with the proper settings.
+#
+##############################################################################
+sub readConfigXML
+{
+    my $parser = new XML::Stream::Parser(style=>"node");
+    my $tree = $parser->parsefile($optctl{config});
+
+    %config = %{&XML::Stream::XML2Config($tree)};
+
+    if (!exists($config{chatbot}->{messages}))
+    {
+        $config{chatbot}->{messages}->{chat} = 1;
+        $config{chatbot}->{messages}->{groupchat} = 1;
+    }
+}
+
+
+##############################################################################
+#
+# loadChannelsXML - load the channels.xml file from the filesystem
+#
+##############################################################################
+sub loadChannelsXML
+{
+    &TriggerEvent("load_channels");
+
+    return if ($config{chatbot}->{channels} eq "");
+    return unless (-e $config{chatbot}->{channels});
+
+    &readChannelsXML($config{chatbot}->{channels});
+}
+
+
+##############################################################################
+#
+# saveChannelsXML - save the channels.xml file back out to the filesystem.
+#
+##############################################################################
+sub saveChannelsXML
+{
+    &TriggerEvent("save_channels","",\%channel,\%channels);
+
+    return if ($config{chatbot}->{channels} eq "");
+
+    &writeChannelsXML($config{chatbot}->{channels},\%channels);
+}
+
+
+##############################################################################
+#
+# readChannelsXML - read the channels XML file, parse it, and set the channels
+#                   hash with the proper settings.
+#
+##############################################################################
+sub readChannelsXML
+{
+    my $channelXML = shift;
+
+    my $parser = new XML::Stream::Parser(style=>"node");
+    my $tree = $parser->parsefile($channelXML);
+
+    my %new_channels = %{&XML::Stream::XML2Config($tree)};
+
+    if (ref($new_channels{channel}) ne "ARRAY")
+    {
+        my $temp = $new_channels{channel};
+        $new_channels{channel} = [];
+        push(@{$new_channels{channel}},$temp);
+    }
+
+    my $currentCount = $#{$channels{channel}} + 1;
+
+    foreach my $channel (0..$#{$new_channels{channel}})
+    {
+        my $jid = new Net::Jabber::JID();
+        $jid->SetUserID($new_channels{channel}->[$channel]->{name});
+        $jid->SetServer($new_channels{channel}->[$channel]->{server});
+        $jid->SetResource($new_channels{channel}->[$channel]->{resource});
+
+        $channel{$jid->GetJID()}->{index} = $channel+$currentCount;
+        $channel{$jid->GetJID()}->{jid} = $jid;
+
+        &TriggerEvent("add_channel","",$channel{$jid->GetJID()});
+
+        $channels{channel}->[$currentCount+$channel] =
+        $new_channels{channel}->[$channel];
+    }
+}
+
+
+##############################################################################
+#
+# writeChannelsXML - write the channels.xml file based on the data in memory.
+#                    Useful for inviting chatbot to a channel and having him
+#                    remember to always stay in that channel.
+#
+##############################################################################
+sub writeChannelsXML
+{
+    my $channelXML = shift;
+    my $channels = shift;
+
+    open(CHANNELS,">$channelXML");
+    print CHANNELS &XML::Stream::Config2XML("channels",$channels),"\n";
+    close(CHANNELS);
+}
+
+
+##############################################################################
+#
+# xmldbWrite - write out the contents of an xmldb (key->value pairs)
+#
+##############################################################################
+sub xmldbWrite
+{
+    my($filename,%hash) = @_;
+
+    my $node = new XML::Stream::Node("data");
+    foreach my $key (sort {$a cmp $b} keys(%hash))
+    {
+        my $def = $node->add_child("def");
+        $def->add_child("key",$key);
+        $def->add_child("value",$hash{$key});
+    }
+
+    open(XMLDB, ">$filename");
+    print XMLDB $node->GetXML(),"\n";
+    close(XMLDB);
+}
+
+
+##############################################################################
+#
+# xmldbRead - read in the contents of an xmldb (key->value pairs)
+#
+##############################################################################
+sub xmldbRead
+{
+    my($filename) = @_;
+
+    my $parser = new XML::Stream::Parser(style=>"node");
+    my $tree = $parser->parsefile($filename);
+
+    my %hash;
+
+    my $defTree;
+    foreach $defTree (&XML::Stream::GetXMLData("tree array",$tree,"def","",""))
+    {
+        my $key = &XML::Stream::GetXMLData("value",$defTree,"key","","");
+        my $value = &XML::Stream::GetXMLData("value",$defTree,"value","","");
+        $hash{$key} = $value;
+    }
+
+    return %hash;
+}
+
+
+##############################################################################
+#
+# Stop - kill ChatBot gracefully
+#
+##############################################################################
+sub Stop
+{
+
+    &TriggerEvent("shutdown");
+
+    if ($Client->Connected())
+    {
+        foreach my $jid (keys(%channel))
+        {
+            $Client->PresenceSend(type=>"unavailable",
+                                  to=>$channel{$jid}->{jid});
+        }
+        sleep(2);
+        $Client->Disconnect();
+    }
+
+    exit(0);
+}
+
+
+##############################################################################
+#
+# LoadPlugins - load all of the available plugins from the plugins directory.
+#               NOTE: We load the help plugin first, so that it can be used
+#               to register commands with.
+#
+##############################################################################
+sub LoadPlugins
+{
+    return unless (-d $config{chatbot}->{plugindir});
+    $plugins{help} = 1 if require "$config{chatbot}->{plugindir}/help.pl";
+
+    foreach my $plugin (@{$config{load}->{plugin}})
+    {
+        next if ($plugin =~ /^help\.pl$/);
+        my ($pluginName) = ($plugin =~ /^(.+)\.pl$/);
+        $plugins{$pluginName} = 1
+            if require "$config{chatbot}->{plugindir}/$plugin";
+    }
+}
+
+
+##############################################################################
+#
+# RegisterEvent - register a handler with an event
+#
+##############################################################################
+sub RegisterEvent
+{
+    my $type = shift;
+    my $handler = shift;
+
+    push(@{$events{$type}},$handler);
+}
+
+
+##############################################################################
+#
+# TriggerEvent - call all of the handlers for a specific event.
+#
+##############################################################################
+sub TriggerEvent
+{
+    my $type = shift;
+    my $fromJID = shift;
+    
+    return unless exists($events{$type});
+
+    $fromJID = "" unless defined($fromJID);
+
+    my @handlers;
+    @handlers = @{$events{$type}}
+    if (exists($events{$type}));
+
+    my @response;
+    foreach my $handler (@handlers)
+    {
+        push(@response,&{$handler}(@_));
+    }
+    &ParseResponse($fromJID,@response) unless ($fromJID eq "");
+}
+
+
+##############################################################################
+#
+# RegisterTimingEvent - tell chatbot to execute a funcion at, or close to, a
+#                       specific time.
+#
+##############################################################################
+sub RegisterTimingEvent
+{
+    my $time = shift;
+    my $registrar = shift;
+    my $handler = shift;
+    my (@args) = @_;
+
+
+    if (!exists($timingevents{$time}))
+    {
+        push(@timingevents,$time);
+				@timingevents = sort {$a <=> $b} @timingevents;
+    }
+    push(@{$timingevents{$time}},{
+                                  registrar=>$registrar,
+                                  handler=>$handler,
+                                  args=>\@args
+                                 });
+}
+
+
+##############################################################################
+#
+# TriggerNextTimingEvent - run through all of the timing events that either
+#                          trigger right now, or should have already
+#                          triggered.
+#
+##############################################################################
+sub TriggerNextTimingEvent
+{
+    my $time = time;
+
+
+    while (($#timingevents > -1) && ($timingevents[0] <= $time))
+    {
+        foreach my $event (@{$timingevents{$timingevents[0]}})
+        {
+            next if ($event->{clear} == 1);
+            &{$event->{handler}}(@{$event->{args}});
+        }
+        delete($timingevents{$timingevents[0]});
+        shift(@timingevents);
+    }
+}
+
+
+##############################################################################
+#
+# ClearTimingEvent - clear all timing events whose registrar matches
+#
+##############################################################################
+sub ClearTimingEvent
+{
+    my $registrar = shift;
+
+    foreach my $time (@timingevents)
+    {
+        foreach my $event (@{$timingevents{$time}})
+        {
+            $event->{clear} = 1;
+        }
+    }
+}
+
+
+##############################################################################
+#
+# ChannelKey - returns the value for a key attached to a channel
+#
+##############################################################################
+sub ChannelKey
+{
+    my $channel = shift;
+    my $key = shift;
+
+    $channel = "" unless defined($channel);
+    return unless exists($channel{$channel});
+
+    $key = "" unless defined($key);
+    return unless exists($channel{$channel}->{$key});
+
+    return $channel{$channel}->{$key};
+}
+
+
+##############################################################################
+#
+# ChatBotNick - returns the nick that ChatBot is using in this channel
+#
+##############################################################################
+sub ChatBotNick
+{
+    my $channel = shift;
+    return unless exists($channel{$channel});
+    return unless exists($channel{$channel}->{index});
+    return $channels{channel}->[$channel{$channel}->{index}]->{resource};
+}
+
+
+##############################################################################
+#
+# Channels - returns a list of all the channels
+#
+##############################################################################
+sub Channels
+{
+    my $channel = shift;
+    return keys(%channel);
+}
+
+
+##############################################################################
+#
+# CurrentUsers - returns a list of all current users in the channel.
+#
+##############################################################################
+sub CurrentUsers
+{
+    my $channel = shift;
+    return keys(%{$current{$channel}});
+}
+
+
+##############################################################################
+#
+# CurrentUser - returns 1 if the user is in the channel, 0 otherwise
+#
+##############################################################################
+sub CurrentUser
+{
+    my $channel = shift;
+    my $user = shift;
+    return exists($current{$channel}->{$user});
+}
+
+
+##############################################################################
+#
+# RegisterCommand - let ChatBot know that this command is available
+#
+##############################################################################
+sub RegisterCommand
+{
+    my (%args) = @_;
+
+    $args{alias} = "" unless exists($args{alias});
+    $args{usage} = "" unless exists($args{usage});
+    $args{desc} = "" unless exists($args{desc});
+    $args{examples} = [] unless exists($args{examples});
+
+    &RegisterEvent("command_".$args{command},$args{handler});
+    &RegisterEvent("command_".$args{alias},$args{handler})
+        unless ($args{alias} eq "");
+    &TriggerEvent("register_help",
+                  "",
+                  $args{command},
+                  $args{alias},
+                  $args{usage},
+                  $args{desc},
+                  $args{examples})
+}
+
+
+##############################################################################
+#
+# ParseResponse - take the output from the commands, and generate the proper
+#                 messages for each one.
+#
+##############################################################################
+sub ParseResponse
+{
+    my ($fromJID,@response) = @_;
+
+    if ($#response > -1)
+    {
+        my $response = new Net::Jabber::Message();
+        while ($#response > -1)
+        {
+            my $type = shift(@response);
+            next unless defined($type);
+            my $body = shift(@response);
+
+            $response->SetMessage(to=>$fromJID->GetJID())
+                if ($type eq "groupchat");
+            $response->SetMessage(to=>$fromJID)
+                if ($type eq "chat");
+            $response->SetMessage(type=>$type,
+                                  body=>$body);
+            $Client->Send($response)
+        }
+    }
+}
+
+
+##############################################################################
+#
+# GarbageCollect - take out the trash
+#
+##############################################################################
+sub GarbageCollect
+{
+    &TriggerEvent("garbage_collect");
+    &ScheduleNextGarbageCollect();
+}
+
+
+##############################################################################
+#
+# ScheduleNextGarbageCollet - shedules the next garbage collection time for
+#                             midnight tomorrow night.
+#
+##############################################################################
+sub ScheduleNextGarbageCollect
+{
+    my (undef,undef,undef,$mday,$mon,$year) = localtime(time + 86400);
+    my $time = timelocal(0,0,0,$mday,$mon,$year);
+    &RegisterTimingEvent($time,"garbage_collect",\&GarbageCollect);
+}
+
+
+##############################################################################
+#
+# CheckPassword - given a password, check the plugin and the master for a
+#                 match.
+#
+##############################################################################
+sub CheckPassword
+{
+    my ($plugin,$password) = @_;
+
+    if (exists($config{plugins}->{$plugin}) &&
+        exists($config{plugins}->{$plugin}->{password}))
+    {
+        return ($password eq $config{plugins}->{$plugin}->{password});
+    }
+    else
+    {
+        return ($password eq $config{plugins}->{password});
+    }
+}
+
+
+##############################################################################
+#
+# RegisterFlag - tell ChatBot that the flag is available
+#
+##############################################################################
+sub RegisterFlag
+{
+    my $flag = shift;
+
+    $flags{$flag} = 1;
+}
+
+
+##############################################################################
+#
+# CheckFlag - return 1 if the flag is set, 0 otherwise.
+#
+##############################################################################
+sub CheckFlag
+{
+    my $channel = shift;
+    my $flag = shift;
+
+    return unless exists($channel{$channel});
+    return exists($channels{channel}->[$channel{$channel}->{index}]->{flags}->{$flag});
+}
+
+
+##############################################################################
+#
+# ToggleFlag - toggle a flag on or off for the specified channel
+#
+##############################################################################
+sub ToggleFlag
+{
+    my $channel = shift;
+    my $flag = shift;
+
+    return unless exists($channel{$channel});
+    if (exists($channels{channel}->[$channel{$channel}->{index}]->{flags}->{$flag}))
+    {
+        delete($channels{channel}->[$channel{$channel}->{index}]->{flags}->{$flag});
+    }
+    else
+    {
+        $channels{channel}->[$channel{$channel}->{index}]->{flags}->{$flag} = "";
+    }
+
+    &saveChannelsXML();
+}
+
+
+##############################################################################
+#
+# Flags - return all of the available flags
+#
+##############################################################################
+sub Flags
+{
+    return sort {$a cmp $b} keys(%flags);
+}
+
+
+##############################################################################
+#
+# JoinChannel - tell ChatBot to join a channel
+#
+##############################################################################
+sub JoinChannel
+{
+    my $name = shift;
+    my $server = shift;
+    my $resource = shift;
+
+    push(@{$channels{channel}},{flags=>{},
+    name=>$name,
+    server=>$server,
+    resource=>$resource});
+
+    my $jid = new Net::Jabber::JID();
+    $jid->SetUserID($name);
+    $jid->SetServer($server);
+    $jid->SetResource($resource);
+
+    $channel{$jid->GetJID()}->{index} = $#{$channels{channel}};
+    $channel{$jid->GetJID()}->{jid} = $jid;
+
+    $Client->PresenceSend(to=>$jid);
+    $Debug->Log0("Sent presence to ",$channel{$jid}->{jid}->GetJID("full"));
+
+    &saveChannelsXML();
+}
+
+
+##############################################################################
+#
+# LeaveChannel - tell ChatBot to leave a channel
+#
+##############################################################################
+sub LeaveChannel
+{
+    my $name = shift;
+    my $server = shift;
+
+    $Client->PresenceSend(to=>$channel{$name."\@".$server}->{jid},
+                          type=>"unavailable");
+
+    splice(@{$channels{channel}},$channel{$name."\@".$server}->{index},1);
+    delete($channel{$name."\@".$server});
+
+    foreach my $index (0..$#{$channels{channel}})
+    {
+        $channel{$channels{channel}->[$index]->{name}."\@".$channels{channel}->[$index]->{server}}->{index} = $index;
+    }
+
+    &saveChannelsXML();
+}
+
+
+sub BrowseRequest
+{
+    my $jid = shift;
+
+    my $IQ = new Net::Jabber::IQ();
+    $IQ->SetIQ(to=>$jid,
+               type=>"get");
+    my $IQBrowse = $IQ->NewQuery("jabber:iq:browse");
+    my $id = $Client->SendWithID($IQ);
+    $Client->DeregisterID("iq",$id);
+
+    return $id;
+}
+
+
+sub BrowseRegister
+{
+    my $id = shift;
+    my $call = shift;
+    my (@args) = @_;
+
+    $browse_requests{$id}->{call} = $call;
+    $browse_requests{$id}->{args} = \@args;
+}
+
+
+sub BrowseHandle
+{
+    my $id = shift;
+    my ($browse) = @_;
+
+    &{$browse_requests{$id}->{call}}($browse,@{$browse_requests{$id}->{args}});
+}
+
+
+sub Send
+{
+    $Client->Send(@_);
+}
+
+
+##############################################################################
+#
+# usage - print the usage, and quit
+#
+##############################################################################
+sub usage
+{
+    print <<USAGE;
+Jabber ChatBot v$VERSION
+
+Usage: $0 [--debug <level>] [--config <file>] [--register]
+       $0 --help
+       $0 --version
+
+  --debug <level>   Sets the level of debug output.  The higher
+                    the number, the more debug output.
+  --config <file>   Tells chatbot the XML config file to use to
+                    configure himself.
+  --register        Causes ChatBot to try to obtain an account on
+                    its configured server if no account exists already
+  --version         prints a version number and then quits
+  --help            prints this text
+USAGE
+    exit(0);
+}
+
+##############################################################################
+#
+# version - print the version, and quit
+#
+##############################################################################
+sub version
+{
+    print "Jabber ChatBot v$VERSION\n";
+    exit(0);
+}
+
+

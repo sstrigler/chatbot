@@ -1,0 +1,102 @@
+2.0
+===
+  - Added an optional timezone to the time plugin.
+  - Added the ability to browse ChatBot.
+  - Split out presence callbacks into their own functions.
+  - Added some browse functions for asynch IO.
+  - Bad regexp in last plugin.
+  - Fixed plugins so that password really work now.
+  - Fixed dice so that it no longer viloates karma, or too big of a
+    message on a !rollall.
+  - Fixed bug with seen.  Shouldn't answer if no user is specified.
+  - Fixed bug when checking the flags in a channel.  If this was not from
+    a channel, then this made it pretend to be one.  Which caused a crash
+    later.
+  - Fixed bug in uptime plugin.
+  - fixed bugs in log.pl.
+  - Added new connect options for chatbot.  You can specify hostname,
+    port, type, ssl, etc...
+  - log plugin now accepts header and footer file for better integration
+    with existing web sites.
+  - Added new plugins for sql.
+  - Added support for normal messages and a normal_message trigger.
+  - Added a filter for message types to accept.
+  - Fixed bug in CurrentUser().
+  - Created plugins.
+  - Created events.
+  - Version bump to show new chatbot architecture.
+
+0.8
+===
+  - Placed cap on dice rolling.
+  - Fixed bug with eliza.
+  - Fixed bug where seen /me would make the result appear to be an action
+    from chatbot.
+  - Fixed bug where someone who make their nick "ChatBot ", or something
+    with the bhatbots nick and a space, would make chatbot message himself
+    and crush the sever.
+  - Fixed bug with seen seenseenseen.... where it would unroll the loop.
+  - Fixed bug with seen ?? where a regexp would die.
+  - Fixed bug where a presence change would trigger the announce message
+  - Added support for rolling dice and generating dnd characters
+  - Changed seen support to match against more nicks and return more
+    results.
+  - Added better support for MIA transports.
+  - Fixed reconnect bug.
+  - Made it so that you have to refer to chatbot and include a : in
+    order fo rhte Eliza module to kick in.  (ie. ChatBot: test)
+  - Added code to ignore past groupchat messages.
+  - Addded --config <file>, or -c <file>, switch to allow for custom
+    location of config file.
+  - Moved Net::Jabber requirement to 1.0018 to get around that silly
+    Broken Pipe error.
+  - Forgot to ignore presence packets coming from outside a channel.
+  - Forgot to encode incoming text to avoid <,>,&, and to convert newlines
+    into <br>.
+  - Added code so that a message not from a monitored channel is ignored.
+
+0.7
+===
+  - Tried to fix bug for groupchat server crashes, let's hope that it
+    works. =)
+  - Added support for assigning log topics and a topics link page so that
+    you can quickly find log topics for the channel.
+  - Changed log format to HTML for pretty colors and linking.
+  - Added support for Eliza so that Chatbot can talk back to you.  But
+    if you don't want to install Eliza you don't have to turn it on.
+
+0.6
+===
+  - Switched log file extension to .txt from .log.
+  - Polling now swtiched to private chat instead of noisy groupchat.
+
+0.5
+===
+  - Summon command can take a "jabber:jid" and send a summon message to
+    that JID.
+  - Seen command now checks against other channels for the user.
+  - Added last command to report the last X statements from the user.
+  - Added code to poll the channel if there has not been any activity for
+    the specified timeout.  If the poll fails it marks the channel as not
+    logged in, then it logs back in.
+
+0.4
+===
+  - Made a logdir setting in the config so that various versions of
+    ChatBot can use the same log space.
+
+0.3
+===
+  - Summon feature added.
+  - You can now toggle the flags for each channel.
+  - Graceful exit.
+
+0.2
+===
+  - Implements seen.
+  - Has an abusive mode.
+  - Can connect to multiple channels and log them all.
+
+0.1
+===
+  - Can connect to a single channelt, log it, provide time, and queries.

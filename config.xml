@@ -1,0 +1,191 @@
+<config>
+
+  <!-- Jabber account information to connect with -->
+  <jabber>
+    <username>chatbot</username>
+    <password>secret</password>
+    <resource>ChatBot</resource>
+    <server>localhost</server>
+    <port>5222</port>
+    <connectiontype>tcpip</connectiontype>
+    <ssl>0</ssl>
+  </jabber>
+
+
+  <!-- ChatBot specific config options -->
+  <chatbot>
+
+    <!-- Period of inactivity in a channel before ChatBot polls -->
+    <!-- for an active connection.  In minutes.                 -->
+    <timeout>1</timeout>
+
+    <!-- If ChatBot determines that the channel server is down, -->
+    <!-- ie. not responding or crashed, this is the amount of   -->
+    <!-- time to wait in between join requests.  In minutes.    -->
+    <downtime>5</downtime>
+
+    <!-- Path to the plugin directory -->
+    <plugindir>./plugins</plugindir>
+
+    <!-- Path to the channels file that tells us which channels -->
+    <!-- chatbot should join.  You can use the online channel   -->
+    <!-- controls as well as this file to control which rooms   -->
+    <!-- chatbot joins.                                         -->
+    <channels>./channels.xml</channels>
+
+    <!-- Allow someone to let chatbot get all types of messages -->
+    <!-- by making them select which ones to allow to pass      -->
+    <!-- through.  Uncomment any that you want to use.          -->
+    <messages>
+      <!--<normal/>-->
+      <chat/>
+      <groupchat/>
+    </messages>
+
+  </chatbot>
+
+  <!-- Plugins to load.  This allows you to control which plugins are  -->
+  <!-- available and used.  If two plugins provide the same function   -->
+  <!-- this allows you to turn one off.                                -->
+  <load>
+    <plugin>channel.pl</plugin>
+    <plugin>debug.pl</plugin>
+    <plugin>dice.pl</plugin>
+    <plugin>eliza.pl</plugin>
+    <plugin>flags.pl</plugin>
+    <plugin>help.pl</plugin>
+    <plugin>join.pl</plugin>
+    <!--<plugin>joinsql.pl</plugin>-->
+    <plugin>keyword.pl</plugin>
+    <plugin>last.pl</plugin>
+    <plugin>log.pl</plugin>
+    <plugin>query.pl</plugin>
+    <!--<plugin>querysql.pl</plugin>-->
+    <!--plugin>role.pl</plugin-->
+		<!--plugin>rss-reader.pl</plugin-->
+    <plugin>seen.pl</plugin>
+    <!--<plugin>seensql.pl</plugin>-->
+		<plugin>spool.pl</plugin>
+    <plugin>time.pl</plugin>
+    <plugin>uptime.pl</plugin>
+    <plugin>url.pl</plugin>
+  </load>
+
+  <!-- Plugin configuration.  The top level tag must match the name of -->
+  <!-- the plugin file.  ie.  <last/> -> last.pl                       -->
+  <plugins>
+
+    <!-- Global pluign password to make it easy to control all features -->
+    <!-- from one password.  You can always use the password in the     -->
+    <!-- plugin for finer control.                                      -->
+    <password>topSecret</password>
+
+    <!-- Plugin to handle telling ChatBot to join and leave channels -->
+    <channel>
+      <!--<password>channel</password>-->
+    </channel>
+
+    <!-- Plugin to handle printing debug info for problem diagnosing -->
+    <debug>
+      <!--<password>debug</password>-->
+    </debug>
+
+    <!-- Plugin to handle rolling dice and D&D characters. -->
+    <dice>
+      <!-- Max number of sides per die -->
+      <maxsize>1000000</maxsize>
+      <!-- Max number of die per roll -->
+      <maxdie>100</maxdie>
+      <!-- If no number die is specified, use this many -->
+      <defaultdie>1</defaultdie>
+      <!-- If no size of die is specified, use this many sides -->
+      <defaultsize>6</defaultsize>
+    </dice>
+
+    <!-- Plugin to handle toggling the flags in a channel -->
+    <flags>
+      <!--<password>flags</password>-->
+    </flags>
+
+    <!-- Plugin to handle announcing join messages. -->
+    <join>
+      <messages>./join_messages.xml</messages>
+      <!--<password>join</password>-->
+    </join>
+
+    <!-- Plugin to handle join messages reqeusts and sets via Mysql -->
+    <joinsql>
+      <mysql>
+        <database>chatbot</database>
+        <host>localhost</host>
+        <user>mysql-user</user>
+        <pass>mysql-pass</pass>
+        <table>joinsql</table>
+      </mysql>
+      <!--<password>joinsql</password>-->
+    </joinsql>
+
+    <!-- Plugin to keep track of the last thing said by every user  -->
+    <!-- so that someone can query it and see what they said before -->
+    <!-- they logged out last.                                      -->
+    <last>
+      <!-- Define how long to keep the messages around in days -->
+      <daystolive>14</daystolive>
+
+      <!-- How many messages to return by default -->
+      <defaultcount>5</defaultcount>
+
+      <!-- Define how many messages to keep before rotating them -->
+      <maxmessages>10</maxmessages>
+
+      <!-- Location of file for persistant storage -->
+      <storage>./last_storage.xml</storage>
+    </last>
+
+    <!-- Plugin to handle logging the contents of a groupchat. -->
+    <log>
+      <publiclogs>./logs</publiclogs>
+      <privatelogs>./logs-secret</privatelogs>
+      <!--<headerfile>./log_header.html</headerfile>-->
+      <!--<footerfile>./log_footer.html</footerfile>-->
+    </log>
+
+    <!-- Plugin to handle query requests and sets. -->
+    <query>
+      <values>./queries.xml</values>
+      <!--password>querysecret</password-->
+    </query>
+
+    <!-- Plugin to handle query requests and sets via Mysql -->
+    <querysql>
+      <mysql>
+        <database>chatbot</database>
+        <host>localhost</host>
+        <user>mysql-user</user>
+        <pass>mysql-pass</pass>
+        <table>querysql</table>
+      </mysql>
+      <!--<password>querysql</password>-->
+    </querysql>
+
+    <!-- Plugin to keep track the seen list so that users can see -->
+    <!-- when the user was last "seen" in the channel.            -->
+    <seen>
+      <!-- Location of file for persistant storage -->
+      <storage>./seen_storage.xml</storage>
+    </seen>
+
+    <!-- Plugin to handle seen requests and sets via Mysql -->
+    <seensql>
+      <mysql>
+        <database>chatbot</database>
+        <host>localhost</host>
+        <user>mysql-user</user>
+        <pass>mysql-pass</pass>
+        <table>seensql</table>
+      </mysql>
+      <!--<password>seensql</password>-->
+    </seensql>
+
+  </plugins>
+</config>

@@ -1,0 +1,18 @@
+<channels>
+  <channel>
+    <flags>
+      <dice/>
+      <eliza/>
+      <join/>
+      <last/>
+      <query/>
+      <role/>
+      <seen/>
+      <url/>
+    </flags>
+    <name>chatbot</name>
+    <server>conference.jwchat.org</server>
+    <resource>ChatBot</resource>
+  </channel>
+</channels>
+
