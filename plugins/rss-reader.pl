@@ -174,10 +174,10 @@ sub plugin_rss_dotick {
     } 
 		
     my $rss = new XML::RSS();
-    eval {
+    eval { ## try ###
       $rss->parse($req->content);
     };
-    if ($@) {
+    if ($@) { ### catch ###
       log1("Malformed XML on source $topic:\n".$@.".\n");
       next;
     }
