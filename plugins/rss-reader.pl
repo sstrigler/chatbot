@@ -2,7 +2,7 @@
 #
 # rss.pl - chatbot plugin for handling rss feeds
 #
-# Copyright (c) 2005 Stefan Strigler <steve@zeank.in-berlin.de>
+# Copyright (c) 2005-2007 Stefan Strigler <steve@zeank.in-berlin.de>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,19 +22,21 @@
 # janchor.pl: By Jeremy Nickurak, 2002
 
 # BEGIN EXTRA CONFIGURATION
-use constant RSS_DELAY => 6;    # Interval for RSS checks. Note that
-                                  # many sites will be very upset if
-                                  # you use less then a 30 minute
-                                  # delay, notably, slashdot.
-use constant RSS_TIMEOUT  => 15; # Timeout for HTTP connections to RSS sources
+use constant RSS_DELAY => 6;     # Interval for RSS checks. Note that
+                                 # many sites will be very upset if
+                                 # you use less then a 30 minute
+                                 # delay, notably, slashdot.
+use constant RSS_TIMEOUT => 15;  # Timeout for HTTP connections to RSS
+                                 # sources
 use constant SUB_FILE     => 'registrations'; # Subscription DB
 use constant CACHE_FILE   => 'rss_cache';     # RSS Cache DB
 use constant SOURCE_FILE  => 'sources';       # Source DB
 use constant STATUS_FILE  => 'status';        # Source Status DB
-use constant VERBOSE      => 1;               # Verbosity level for logging output
+use constant VERBOSE => 1;                    # Verbosity level for
+                                              # logging output
 
 # END EXTRA CONFIGURATION
-use constant VERSION	=> '0.1';
+use constant VERSION	=> '0.2';
 use Data::Dumper;
 use MLDBM 'DB_File';
 use Text::Iconv;
@@ -83,10 +85,14 @@ my $ua = new LWP::UserAgent(timeout=>RSS_TIMEOUT);
 # ###
 sub plugin_rss_startup {
   log3("rss-reader starting ...");
-  tie (%reg, 'MLDBM', SUB_FILE) or die ("Cannot tie to " . SUB_FILE."!\n");
-  tie (%cache, 'MLDBM', CACHE_FILE) or die ("Cannot tie to " . CACHE_FILE."!\n");
-  tie (%sources, 'MLDBM', SOURCE_FILE) or die ("Cannot tie to " . SOURCE_FILE."!\n");
-  tie (%status, 'MLDBM', STATUS_FILE) or die ("Cannot tie to " . STATUS_FILE."!\n");
+  tie (%reg, 'MLDBM', SUB_FILE) or 
+    die ("Cannot tie to " . SUB_FILE."!\n");
+  tie (%cache, 'MLDBM', CACHE_FILE) or 
+    die ("Cannot tie to " . CACHE_FILE."!\n");
+  tie (%sources, 'MLDBM', SOURCE_FILE) or 
+    die ("Cannot tie to " . SOURCE_FILE."!\n");
+  tie (%status, 'MLDBM', STATUS_FILE) or 
+    die ("Cannot tie to " . STATUS_FILE."!\n");
 
   &RegisterTimingEvent(time,"rss_tick",\&plugin_rss_dotick);
 }
@@ -171,8 +177,8 @@ sub plugin_rss_dotick {
     if (!$req->is_success) {
       log3($req->status_line);
       next;
-    } 
-		
+    }
+
     my $rss = new XML::RSS();
     eval { ## try ###
       $rss->parse($req->content);
@@ -212,11 +218,14 @@ sub plugin_rss_dotick {
 	
         log2("New item from $topic - $key");
 
-				# Broadcast the message, IFF this isn't our first encounter with this topic.
+        # Broadcast the message, IFF this isn't our first encounter
+        # with this topic.
         if (not $new_topic) {
           # Create headline message
           my $msg = new Net::Jabber::Message();
-          $msg->SetMessage(type=>'groupchat', body =>("[".$topic."] ".$item->{title}."\n".$item->{link}));
+          $msg->SetMessage(type=>'groupchat',
+                           body =>("[".$topic."] ".
+                                   $item->{title}."\n".$item->{link}));
           my @channels = &Channels();
           foreach my $chan (@channels) {
             next unless &CheckFlag($chan,"rss");
@@ -235,8 +244,10 @@ sub plugin_rss_dotick {
     # Forget cached items that have since been removed from their source.
     my $cached_items = $cache{$topic};
     foreach my $key (keys(%$cached_items)) {
-      delete $cached_items->{$key} unless defined($temp_items{$key});
-      log1("Killing $topic 's cache for $key.") unless defined($temp_items{$key});
+      delete $cached_items->{$key} 
+        unless defined($temp_items{$key});
+      log1("Killing $topic 's cache for $key.")
+        unless defined($temp_items{$key});
     }
 
     $cache{$topic} = $cached_items;
