@@ -51,7 +51,7 @@
     <plugin>channel.pl</plugin>
     <plugin>debug.pl</plugin>
     <plugin>dice.pl</plugin>
-    <plugin>eliza.pl</plugin>
+    <!--plugin>eliza.pl</plugin-->
     <plugin>flags.pl</plugin>
     <plugin>help.pl</plugin>
     <plugin>join.pl</plugin>
@@ -62,7 +62,7 @@
     <plugin>query.pl</plugin>
     <!--<plugin>querysql.pl</plugin>-->
     <!--plugin>role.pl</plugin-->
-		<!--plugin>rss-reader.pl</plugin-->
+		<plugin>rss-reader.pl</plugin>
     <plugin>seen.pl</plugin>
     <!--<plugin>seensql.pl</plugin>-->
 		<plugin>spool.pl</plugin>

@@ -2,16 +2,16 @@
   <channel>
     <flags>
       <dice/>
-      <eliza/>
       <join/>
       <last/>
       <query/>
       <role/>
+			<rss/>
       <seen/>
       <url/>
     </flags>
-    <name>chatbot</name>
-    <server>conference.jwchat.org</server>
+    <name>test</name>
+    <server>conference.localhost</server>
     <resource>ChatBot</resource>
   </channel>
 </channels>

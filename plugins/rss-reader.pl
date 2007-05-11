@@ -22,7 +22,7 @@
 # janchor.pl: By Jeremy Nickurak, 2002
 
 # BEGIN EXTRA CONFIGURATION
-use constant RSS_DELAY => 600;    # Interval for RSS checks. Note that
+use constant RSS_DELAY => 6;    # Interval for RSS checks. Note that
                                   # many sites will be very upset if
                                   # you use less then a 30 minute
                                   # delay, notably, slashdot.
@@ -178,7 +178,7 @@ sub plugin_rss_dotick {
       $rss->parse($req->content);
     };
     if ($@) { ### catch ###
-      log1("Malformed XML on source $topic:\n".$@.".\n");
+      log1("Malformed XML on source $topic:".$@);
       next;
     }
 		
