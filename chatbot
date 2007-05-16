@@ -813,7 +813,12 @@ sub TriggerEvent
     my @response;
     foreach my $handler (@handlers)
     {
+      eval {
         push(@response,&{$handler}(@_));
+      };
+      if ($@) {
+        print STDERR "a handler for event '$type' died: $@\n";
+      }
     }
     &ParseResponse($fromJID,@response) unless ($fromJID eq "");
 }
