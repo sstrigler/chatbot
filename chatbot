@@ -826,7 +826,7 @@ sub PluginFinalize
         &{$plugins{$name}->{finalize}};
       };
       if ($@) {
-        $Debug->Log0("PluginTerminate failed for $name: $@");
+        $Debug->Log0("PluginFinalize failed for $name: $@");
       }
     }
   }
