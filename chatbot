@@ -742,6 +742,10 @@ sub Stop
 
     &TriggerEvent("shutdown");
 
+    foreach (keys %plugins) {
+      PluginTerminate($_);
+    }
+
     if ($Client->Connected())
     {
         foreach my $jid (keys(%channel))
@@ -773,7 +777,8 @@ sub LoadPlugins
     {
         next if ($plugin =~ /^help\.pl$/);
         my ($pluginName) = ($plugin =~ /^(.+)\.pl$/);
-        require "$config{chatbot}->{plugindir}/$plugin");
+        require "$config{chatbot}->{plugindir}/$plugin";
+        &PluginInit($pluginName);
     }
 }
 
