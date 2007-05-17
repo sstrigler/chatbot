@@ -30,10 +30,10 @@ my $VERSION = "2.0";
 # gracefully.
 #
 ##############################################################################
-$SIG{HUP} = \&Stop;
+$SIG{HUP}  = \&Stop;
 $SIG{KILL} = \&Stop;
 $SIG{TERM} = \&Stop;
-$SIG{INT} = \&Stop;
+$SIG{INT}  = \&Stop;
 
 ##############################################################################
 #
@@ -81,6 +81,7 @@ my %channels;
 my %active;
 my %current;
 my %plugins;
+
 my %events;
 my %timingevents;
 my @timingevents;
@@ -766,17 +767,64 @@ sub Stop
 sub LoadPlugins
 {
     return unless (-d $config{chatbot}->{plugindir});
-    $plugins{help} = 1 if require "$config{chatbot}->{plugindir}/help.pl";
+    require "$config{chatbot}->{plugindir}/help.pl";
 
     foreach my $plugin (@{$config{load}->{plugin}})
     {
         next if ($plugin =~ /^help\.pl$/);
         my ($pluginName) = ($plugin =~ /^(.+)\.pl$/);
-        $plugins{$pluginName} = 1
-            if require "$config{chatbot}->{plugindir}/$plugin";
+        require "$config{chatbot}->{plugindir}/$plugin");
     }
 }
 
+##############################################################################
+#
+# RegisterPlugin - register a plugin eventually having init and
+#                  terminate handlers
+#
+##############################################################################
+sub RegisterPlugin
+  {
+    my %plugin = shift;
+    return unless exists $plugin{name};
+    $plugins{$plugin{name}} = \%plugin;
+  }
+
+##############################################################################
+#
+# PluginInit - call init handler for plugin given by $name
+#
+##############################################################################
+sub PluginInit
+  {
+    my $name = shift;
+    if (exists($plugins{$name}) && exists($plugins{$name}->{init})) {
+      eval {
+        &{$plugins{$name}->{init}};
+      };
+      if ($@) {
+        $Debug->Log0("PluginInit failed for $name: $@");
+      }
+    }
+  }
+
+##############################################################################
+#
+# PluginTerminate - call terminate handler for plugin given by $name
+#
+##############################################################################
+sub PluginTerminate
+  {
+    my $name = shift;
+    if (exists($plugins{$name}) && exists($plugins{$name}->{terminate})) {
+      eval {
+        &{$plugins{$name}->{terminate}};
+      };
+      if ($@) {
+        $Debug->Log0("PluginTerminate failed for $name: $@");
+      }
+    }
+  }
 
 ##############################################################################
 #
@@ -791,7 +839,6 @@ sub RegisterEvent
     push(@{$events{$type}},$handler);
 }
 
-
 ##############################################################################
 #
 # TriggerEvent - call all of the handlers for a specific event.
@@ -801,7 +848,7 @@ sub TriggerEvent
 {
     my $type = shift;
     my $fromJID = shift;
-    
+
     return unless exists($events{$type});
 
     $fromJID = "" unless defined($fromJID);
@@ -841,13 +888,14 @@ sub RegisterTimingEvent
     if (!exists($timingevents{$time}))
     {
         push(@timingevents,$time);
-				@timingevents = sort {$a <=> $b} @timingevents;
+        @timingevents = sort {$a <=> $b} @timingevents;
     }
-    push(@{$timingevents{$time}},{
-                                  registrar=>$registrar,
-                                  handler=>$handler,
-                                  args=>\@args
-                                 });
+    push(@{$timingevents{$time}},
+         {
+          registrar=>$registrar,
+          handler=>$handler,
+          args=>\@args
+         });
 }
 
 
