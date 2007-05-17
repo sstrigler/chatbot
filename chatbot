@@ -817,7 +817,6 @@ sub PluginInit
     if (exists($plugins{$name}->{commands}) &&
         ref($plugins{$name}->{commands}) eq 'ARRAY') {
       foreach (@{$plugins{$name}->{commands}}) {
-        print "loading command ".$_->{command}."\n";
         &RegisterCommand(%{$_});
       }
     }
@@ -844,7 +843,6 @@ sub PluginFinalize
     if (exists($plugins{$name}->{commands}) &&
         ref($plugins{$name}->{commands}) eq 'ARRAY') {
       foreach (@{$plugins{$name}->{commands}}) {
-        print "unloading command ".$_->{command}."\n";
         &UnRegisterCommand(%{$_});
       }
     }
