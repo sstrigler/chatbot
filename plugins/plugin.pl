@@ -39,18 +39,12 @@ my %Stat;
 ##############################################################################
 &RegisterPlugin(name     => "plugin",
                 init     => \&plugin_plugin_init,
-                finalize => \&plugin_plugin_finalize);
-
-##############################################################################
-#
-# Register Events
-#
-##############################################################################
-&RegisterCommand(command=>"!load",
-                 alias=>"!l",
-                 handler=>\&plugin_plugin_load,
-                 desc=>"Tell ChatBot to load a plugin.",
-                 usage=>"<password> <plugin>");
+                finalize => \&plugin_plugin_finalize,
+                commands => [{command=>"!load",
+                              alias=>"!l",
+                              handler=>\&plugin_plugin_load,
+                              desc=>"Tell ChatBot to load a plugin.",
+                              usage=>"<password> <plugin>"}]);
 
 ##############################################################################
 #
@@ -109,6 +103,7 @@ sub plugin_plugin_load
 ##############################################################################
 sub plugin_plugin_tick
   {
+    
     my $c=0;
     while (my($key,$file) = each %INC) {
       next if $file eq 
