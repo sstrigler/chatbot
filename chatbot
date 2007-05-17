@@ -63,7 +63,7 @@ if (!(-f $optctl{config}))
 # Delcare global variables
 #
 ##############################################################################
-use vars qw ( %config %plugin_env $Client $Debug );
+use vars qw ( %config %plugin_env %plugins $Client $Debug );
 
 ##############################################################################
 #
@@ -81,8 +81,6 @@ my %channel;
 my %channels;
 my %active;
 my %current;
-my %plugins;
-
 my %events;
 my %timingevents;
 my @timingevents;
@@ -552,7 +550,7 @@ sub iqBrowseGetCB
 
     my $reply = $iq->Reply(type=>"result");
     my $query = $reply->NewQuery("jabber:iq:browse");
-    
+
     $query->SetBrowse(category=>"application",
                       type=>"bot",
                       jid=>$config{jabber}->{username}."\@".$config{jabber}->{server}."/".$config{jabber}->{resource},
@@ -779,6 +777,7 @@ sub LoadPlugins
         next if ($plugin =~ /^help\.pl$/);
         my ($pluginName) = ($plugin =~ /^(.+)\.pl$/);
         require "$config{chatbot}->{plugindir}/$plugin";
+
         &PluginInit($pluginName);
     }
 }
