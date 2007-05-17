@@ -15,9 +15,9 @@ This is how ChatBot know what to load from that directory.
   If your plugin needs initialization for finalization call
 &RegisterPlugin with the following hash structure as argument:
 
-name =>      the name of the plugin (must be filename without .pl)
-init =>      pointer to init handler (called when plugin is loaeded)
-terminate => pointer to terminate handler (called when plugin is unloaded)
+name     => the name of the plugin (must be filename without .pl)
+init     => pointer to init handler (called when plugin is loaeded)
+finalize => pointer to finalize handler (called when plugin is unloaded)
 
 Events
 ------

@@ -743,7 +743,7 @@ sub Stop
     &TriggerEvent("shutdown");
 
     foreach (keys %plugins) {
-      PluginTerminate($_);
+      PluginFinalize($_);
     }
 
     if ($Client->Connected())
@@ -815,15 +815,15 @@ sub PluginInit
 
 ##############################################################################
 #
-# PluginTerminate - call terminate handler for plugin given by $name
+# PluginFinalize - call terminate handler for plugin given by $name
 #
 ##############################################################################
-sub PluginTerminate
+sub PluginFinalize
   {
     my $name = shift;
-    if (exists($plugins{$name}) && exists($plugins{$name}->{terminate})) {
+    if (exists($plugins{$name}) && exists($plugins{$name}->{finalize})) {
       eval {
-        &{$plugins{$name}->{terminate}};
+        &{$plugins{$name}->{finalize}};
       };
       if ($@) {
         $Debug->Log0("PluginTerminate failed for $name: $@");
