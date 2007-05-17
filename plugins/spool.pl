@@ -37,16 +37,8 @@ use constant SPOOLDELAY   => 10;	# poll interval in seconds
 ##############################################################################
 &RegisterPlugin(name     => "spool",
                 init     => \&plugin_spool_init,
-                finalize => \&plugin_spool_finalize);
-
-
-##############################################################################
-#
-# Register Flags
-# 
-##############################################################################
-&RegisterFlag("spool");
-
+                finalize => \&plugin_spool_finalize,
+                flag      => "spool");
 
 ##############################################################################
 ##
@@ -72,7 +64,7 @@ sub plugin_spool_init {
 }
 
 sub plugin_spool_dotick {
-  $Debug->Log0("spool tick");
+  $Debug->Log1("spool tick");
 
   my @allfiles = grep -T, map "$config{plugins}->{spool}->{spooldir}/$_", 
     readdir $config{plugins}->{spool}->{fh};
@@ -83,7 +75,7 @@ sub plugin_spool_dotick {
     open FH, $file or die "Can't open $file: $!";
 
     my $raw = join "", <FH>;
-    
+
     $Debug->Log0("sending: $raw");
 
     Send($raw);
