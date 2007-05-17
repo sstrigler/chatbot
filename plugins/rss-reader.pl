@@ -18,25 +18,24 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
-# lots of code taken from
-# janchor.pl: By Jeremy Nickurak, 2002
+# adopted from janchor.pl by Jeremy Nickurak, 2002
 
 # BEGIN EXTRA CONFIGURATION
-use constant RSS_DELAY => 6;     # Interval for RSS checks. Note that
+use constant RSS_DELAY => 10;     # Interval for RSS checks. Note that
                                  # many sites will be very upset if
                                  # you use less then a 30 minute
                                  # delay, notably, slashdot.
 use constant RSS_TIMEOUT => 15;  # Timeout for HTTP connections to RSS
                                  # sources
-use constant SUB_FILE     => 'registrations'; # Subscription DB
+use constant SUB_FILE     => 'rss_subscriptions'; # Subscription DB
 use constant CACHE_FILE   => 'rss_cache';     # RSS Cache DB
-use constant SOURCE_FILE  => 'sources';       # Source DB
-use constant STATUS_FILE  => 'status';        # Source Status DB
-use constant VERBOSE => 1;                    # Verbosity level for
+use constant SOURCE_FILE  => 'rss_sources';   # Source DB
+use constant STATUS_FILE  => 'rss_status';    # Source Status DB
+use constant VERBOSE => 2;                    # Verbosity level for
                                               # logging output
 
 # END EXTRA CONFIGURATION
-use constant VERSION	=> '0.2';
+use constant VERSION	=> '0.3';
 use Data::Dumper;
 use MLDBM 'DB_File';
 use Text::Iconv;
@@ -46,7 +45,7 @@ use XML::RSS;
 use strict;
 
 # DB-tied hashes
-my %reg;
+my %sub;
 my %cache;
 my %sources;
 my %status;
@@ -85,7 +84,7 @@ my $ua = new LWP::UserAgent(timeout=>RSS_TIMEOUT);
 # ###
 sub plugin_rss_startup {
   log3("rss-reader starting ...");
-  tie (%reg, 'MLDBM', SUB_FILE) or 
+  tie (%sub, 'MLDBM', SUB_FILE) or 
     die ("Cannot tie to " . SUB_FILE."!\n");
   tie (%cache, 'MLDBM', CACHE_FILE) or 
     die ("Cannot tie to " . CACHE_FILE."!\n");
@@ -93,6 +92,7 @@ sub plugin_rss_startup {
     die ("Cannot tie to " . SOURCE_FILE."!\n");
   tie (%status, 'MLDBM', STATUS_FILE) or 
     die ("Cannot tie to " . STATUS_FILE."!\n");
+
 
   &RegisterTimingEvent(time,"rss_tick",\&plugin_rss_dotick);
 }
@@ -102,7 +102,7 @@ sub plugin_rss_shutdown {
 
   ClearTimingEvent("rss_tick");
 	
-  untie %reg;
+  untie %sub;
   untie %cache;
   untie %sources;
   untie %status;
@@ -115,12 +115,15 @@ sub plugin_rss_list {
   return unless &CheckFlag($fromJID->GetJID(),"rss");
 
   my $txt = '';
-  foreach (keys %sources) {
-    $txt .= $_.': '.$sources{$_}."\n";
+  if (exists($sub{$fromJID->GetJID()})) {
+    foreach (keys %{$sub{$fromJID->GetJID()}}) {
+      $txt .= $sub{$fromJID->GetJID()}->{$_}.': '.$_."\n";
+    }
+  } else {
+    $txt = "You're not subscribed to any feed";
   }
 
-  return ($message->GetType(),$txt) unless ($txt eq '');
-  return ($message->GetType(),"You're not subscribed to any feed");
+  return ($message->GetType(),$txt);
 }
 
 sub plugin_rss_subscribe {
@@ -137,9 +140,19 @@ sub plugin_rss_subscribe {
   return ($message->GetType(),"Permission denied.")
     unless &CheckPassword("rss",$password);
 	
-  # would be nice to check whether $url is a valid feed ...
-	
-  $sources{lc($name)} = $url;
+  if (exists($sub{$fromJID->GetJID()})) {
+    my %feeds = ($url => $name);
+    $sub{$fromJID->GetJID()}->{$url} = $name;
+    log2(Data::Dumper->Dump([$sub{$fromJID->GetJID()}]));
+  } else {
+    my %feeds = ($url => $name);
+    $sub{$fromJID->GetJID()} = \%feeds;
+  }
+
+  $sources{$url} = (
+     'errors' => 0,
+     'last' => 0)
+  unless (grep $url, keys %sources);
 
   # run schedular to fetch this one
   &ClearTimingEvent('rss_tick');
@@ -162,7 +175,7 @@ sub plugin_rss_unsubscribe {
   return ($message->GetType(),"Permission denied.")
     unless &CheckPassword("rss",$password);
 
-  delete $sources{lc($name)}; 
+  #delete $sources{lc($name)}; 
   return ($message->GetType(),"Sucessfully unsubscribed from $name.");
 }
 
@@ -170,10 +183,10 @@ sub plugin_rss_dotick {
   log3("tick");
 	
   # loop sources
-  foreach my $topic (sort(keys(%sources))) {
-    log2("checking $sources{$topic}");
+  foreach my $url (sort (keys %sources)) {
+    log2("checking $url");
 
-    my $req = $ua->get($sources{$topic});
+    my $req = $ua->get($url);
     if (!$req->is_success) {
       log3($req->status_line);
       next;
@@ -184,7 +197,7 @@ sub plugin_rss_dotick {
       $rss->parse($req->content);
     };
     if ($@) { ### catch ###
-      log1("Malformed XML on source $topic:".$@);
+      log1("Malformed XML on source $url:".$@);
       next;
     }
 		
@@ -196,61 +209,60 @@ sub plugin_rss_dotick {
 
     my %temp_items = ();
     log3("after reset");
-    # Deterimine & record whether this is a new topic.
-    my $new_topic = 0;
+    # Deterimine & record whether this is a new url.
+    my $new_url = 0;
     log3("after new init");
-    if (exists $cache{$topic}) {
-      log3("Not new topic");
+    if (exists $cache{$url}) {
+      log3("Not new url");
     } else {
-      log3("New topic");
-      $new_topic = 1;
+      log3("New url");
+      $new_url = 1;
     }
     log3("Iterating.");
 
     foreach my $item (@items) {
       my $key = $item->{title};
       $key = $item->{url} unless $key;
-      $key = $topic unless $key;
+      $key = $url unless $key;
       $temp_items{$key} = 1;
-      delete $cache{$topic} unless (ref($cache{$topic}) eq 'HASH');
-      if ($new_topic or not exists $cache{$topic}->{$key}) {
+      delete $cache{$url} unless (ref($cache{$url}) eq 'HASH');
+      if ($new_url or not exists $cache{$url}->{$key}) {
 				# New item.
 	
-        log2("New item from $topic - $key");
+        log2("New item from $url - $key");
 
         # Broadcast the message, IFF this isn't our first encounter
-        # with this topic.
-        if (not $new_topic) {
-          # Create headline message
-          my $msg = new Net::Jabber::Message();
-          $msg->SetMessage(type=>'groupchat',
-                           body =>("[".$topic."] ".
-                                   $item->{title}."\n".$item->{link}));
+        # with this url.
+        if (not $new_url) {
           my @channels = &Channels();
           foreach my $chan (@channels) {
             next unless &CheckFlag($chan,"rss");
+            my $msg = new Net::Jabber::Message();
+            $msg->SetMessage(type=>'groupchat',
+                           body =>("[".$sub{$chan}->{$url}."] ".
+                                   $item->{title}."\n".$item->{link}));
             $msg->SetTo($chan);
             &Send($msg);
           }
         }
 
         # Remember that we've seen it.
-        my $element = $cache{$topic};
+        my $element = $cache{$url};
         $element->{$key} = 1;
-        $cache{$topic} = $element;
+        $cache{$url} = $element;
       }
     }
 
     # Forget cached items that have since been removed from their source.
-    my $cached_items = $cache{$topic};
+    my $cached_items = $cache{$url};
     foreach my $key (keys(%$cached_items)) {
       delete $cached_items->{$key} 
         unless defined($temp_items{$key});
-      log1("Killing $topic 's cache for $key.")
+      log1("Killing ${url}'s cache for $key.")
         unless defined($temp_items{$key});
     }
 
-    $cache{$topic} = $cached_items;
+    $cache{$url} = $cached_items;
 										
   }
 	
