@@ -29,14 +29,16 @@ use strict;
 
 use constant SPOOLDELAY   => 10;	# poll interval in seconds 
                                         # for checking spool
-use constant VERBOSE      => 2;         # Verbosity level for logging output
-
 
 ##############################################################################
 #
-# Register Events
+# Register Plugin
 #
 ##############################################################################
+&RegisterPlugin(name     => "spool",
+                init     => \&plugin_spool_init,
+                finalize => \&plugin_spool_finalize);
+
 
 ##############################################################################
 #
@@ -44,14 +46,6 @@ use constant VERBOSE      => 2;         # Verbosity level for logging output
 # 
 ##############################################################################
 &RegisterFlag("spool");
-
-##############################################################################
-#
-# Register Events
-# 
-##############################################################################
-&RegisterEvent("startup",\&plugin_spool_startup);
-&RegisterEvent("shutdown",\&plugin_spool_shutdown);
 
 
 ##############################################################################
@@ -68,8 +62,8 @@ $config{plugins}->{spool}->{spooldir} = "./spool"
 # Callbacks
 #
 ##############################################################################
-sub plugin_spool_startup {
-  log3("spool plugin starting up...");
+sub plugin_spool_init {
+  $Debug->Log0("spool plugin initializing...");
 
   opendir SPOOLDIR, $config{plugins}->{spool}->{spooldir} or die "Can't open spooldir: $!";
   $config{plugins}->{spool}->{fh} = *SPOOLDIR;
@@ -78,18 +72,19 @@ sub plugin_spool_startup {
 }
 
 sub plugin_spool_dotick {
-  log3("tick");
+  $Debug->Log0("spool tick");
 
-  my @allfiles = grep -T, map "$config{plugins}->{spool}->{spooldir}/$_", readdir $config{plugins}->{spool}->{fh};
+  my @allfiles = grep -T, map "$config{plugins}->{spool}->{spooldir}/$_", 
+    readdir $config{plugins}->{spool}->{fh};
 
   foreach my $file (@allfiles) {
-    log2("got $file");
+    $Debug->Log1("got $file");
 
     open FH, $file or die "Can't open $file: $!";
 
     my $raw = join "", <FH>;
     
-    log2("sending: $raw");
+    $Debug->Log0("sending: $raw");
 
     Send($raw);
 
@@ -101,32 +96,11 @@ sub plugin_spool_dotick {
   &RegisterTimingEvent(time+SPOOLDELAY,"spool_tick",\&plugin_spool_dotick);
 }
 
-sub plugin_spool_shutdown {
-  log3("spool plugin exiting ...");
+sub plugin_spool_finalize {
+  $Debug->Log0("spool plugin exiting ...");
 
   ClearTimingEvent("spool_tick");
   closedir $config{plugins}->{spool}->{fh};	
 }
-sub log1 {
-  # WARN
-  my $msg = shift;
-  return unless VERBOSE >= 1;
-  print STDERR "WARN: $msg\n";
-}
-  
-sub log2 {
-  # INFO
-  my $msg = shift;
-  return unless VERBOSE >= 2;
-  print "INFO: $msg\n";
-}
- 
-sub log3 {
-  # DBUG
-  my $msg = shift;
-  return unless VERBOSE >= 3;
-  print "DBUG: $msg\n";
-}
-
 
 1;
