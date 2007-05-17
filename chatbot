@@ -948,7 +948,7 @@ sub ClearTimingEvent
     {
         foreach my $event (@{$timingevents{$time}})
         {
-            $event->{clear} = 1;
+            $event->{clear} = 1 if $event->{registrar} eq $registrar;
         }
     }
 }
