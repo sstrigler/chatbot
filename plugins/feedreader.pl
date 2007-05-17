@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# rss.pl - chatbot plugin for handling rss feeds
+# feedreader.pl - chatbot plugin for handling rss feeds
 #
 # Copyright (c) 2005-2007 Stefan Strigler <steve@zeank.in-berlin.de>
 #
@@ -27,15 +27,13 @@ use constant RSS_DELAY => 10;     # Interval for RSS checks. Note that
                                  # delay, notably, slashdot.
 use constant RSS_TIMEOUT => 15;  # Timeout for HTTP connections to RSS
                                  # sources
-use constant SUB_FILE     => 'rss_subscriptions'; # Subscription DB
-use constant CACHE_FILE   => 'rss_cache';     # RSS Cache DB
-use constant SOURCE_FILE  => 'rss_sources';   # Source DB
-use constant STATUS_FILE  => 'rss_status';    # Source Status DB
-use constant VERBOSE => 2;                    # Verbosity level for
-                                              # logging output
+use constant SUB_FILE     => 'feedreader_sub';       # Subscription DB
+use constant CACHE_FILE   => 'feedreader_cache';     # RSS Cache DB
+use constant SOURCE_FILE  => 'feedreader_sources';   # Source DB
+use constant STATUS_FILE  => 'feedreader_status';    # Source Status DB
 
 # END EXTRA CONFIGURATION
-use constant VERSION	=> '0.3';
+use constant VERSION	=> '1.0';
 use Data::Dumper;
 use MLDBM 'DB_File';
 use Text::Iconv;
@@ -44,46 +42,44 @@ use XML::RSS;
 
 use strict;
 
+# ###
+# globals
+# ###
+my $ua;
+
+# ###
 # DB-tied hashes
+# ###
 my %sub;
 my %cache;
 my %sources;
 my %status;
 
-# my user agent
-my $ua = new LWP::UserAgent(timeout=>RSS_TIMEOUT);
+# ###
+# register plugin
+# ###
+&RegisterPlugin(name     => 'feedreader',
+                flag     => 'feedreader',
+                init     => \&plugin_feedreader_init,
+                finalize => \&plugin_feedreader_finalize,
+                commands => [{command=>"!feed_list",
+                              handler=>\&plugin_feed_list,
+                              desc=>"list subscribed feeds"},
+                             {command=>"!feed_subscribe",
+                              handler=>\&plugin_feed_subscribe,
+                              desc=>"subscribe feed",
+                              usage=>"<password> <name> <url>"},
+                             {command=>"!feed_unsubscribe",
+                              handler=>\&plugin_feed_unsubscribe,
+                              desc=>"unsubscribe feed".
+                              usage=>"<password> <name>"}]);
 
 # ###
-# register events
+# INIT
 # ###
+sub plugin_feedreader_init {
+  $Debug->Log0("feedreader starting ...");
 
-&RegisterEvent("startup",\&plugin_rss_startup);
-&RegisterEvent("shutdown",\&plugin_rss_shutdown);
-
-&RegisterCommand(command=>"!rss_list",
-                 handler=>\&plugin_rss_list,
-                 desc=>"list subscribed feeds");
-
-&RegisterCommand(command=>"!rss_subscribe",
-                 handler=>\&plugin_rss_subscribe,
-                 desc=>"subscribe RSS feed",
-                 usage=>"<password> <name> <url>");
-
-&RegisterCommand(command=>"!rss_unsubscribe",
-                 handler=>\&plugin_rss_unsubscribe,
-                 desc=>"unsubscribe RSS feed".
-                 usage=>"<password> <name>");
-
-# ###
-# register flag
-# ###
-&RegisterFlag('rss');
-
-# ###
-# callbacks
-# ###
-sub plugin_rss_startup {
-  log3("rss-reader starting ...");
   tie (%sub, 'MLDBM', SUB_FILE) or 
     die ("Cannot tie to " . SUB_FILE."!\n");
   tie (%cache, 'MLDBM', CACHE_FILE) or 
@@ -93,14 +89,18 @@ sub plugin_rss_startup {
   tie (%status, 'MLDBM', STATUS_FILE) or 
     die ("Cannot tie to " . STATUS_FILE."!\n");
 
+  $ua = new LWP::UserAgent(timeout=>RSS_TIMEOUT);
 
-  &RegisterTimingEvent(time,"rss_tick",\&plugin_rss_dotick);
+  &RegisterTimingEvent(time,"feed_tick",\&plugin_feed_dotick);
 }
 
-sub plugin_rss_shutdown {
-  log3("rss-reader exiting ...");
+# ###
+# FINALIZE
+# ###
+sub plugin_feedreader_finalize {
+  $Debug->Log0("feedreader exiting ...");
 
-  ClearTimingEvent("rss_tick");
+  ClearTimingEvent("feed_tick");
 	
   untie %sub;
   untie %cache;
@@ -108,11 +108,15 @@ sub plugin_rss_shutdown {
   untie %status;
 }
 
-sub plugin_rss_list {
+# ###
+# LIST
+# ###
+sub plugin_feed_list {
+  $Debug->Log0("feed list");
   my $message = shift;
 
   my $fromJID = $message->GetFrom("jid");
-  return unless &CheckFlag($fromJID->GetJID(),"rss");
+  return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
   my $txt = '';
   if (exists($sub{$fromJID->GetJID()})) {
@@ -126,19 +130,22 @@ sub plugin_rss_list {
   return ($message->GetType(),$txt);
 }
 
-sub plugin_rss_subscribe {
+# ###
+# SUBSCRIBE
+# ###
+sub plugin_feed_subscribe {
   my $message = shift;
   my $args = shift;
 
   my $fromJID = $message->GetFrom("jid");
-  return unless &CheckFlag($fromJID->GetJID(),"rss");
+  return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
   my ($password,$name,$url) = ($args =~ /^\s*(\S+)\s+(\S+)\s+(\S+)\s*$/);
 	
   return ($message->GetType(),"The command was in error.")
     if !defined($password);
   return ($message->GetType(),"Permission denied.")
-    unless &CheckPassword("rss",$password);
+    unless &CheckPassword("feedreader",$password);
 	
   if (exists($sub{$fromJID->GetJID()})) {
     my %feeds = ($url => $name);
@@ -155,40 +162,46 @@ sub plugin_rss_subscribe {
   unless (grep $url, keys %sources);
 
   # run schedular to fetch this one
-  &ClearTimingEvent('rss_tick');
-  &RegisterTimingEvent(time,"rss_tick",\&plugin_rss_dotick);
+  &ClearTimingEvent('feed_tick');
+  &RegisterTimingEvent(time,"feed_tick",\&plugin_feed_dotick);
 
   return ($message->GetType(),"Sucessfully added $name ($url).");
 }
 
-sub plugin_rss_unsubscribe {
+# ###
+# UNSUBSCRIBE
+# ###
+sub plugin_feed_unsubscribe {
   my $message = shift;
   my $args = shift;
 
   my $fromJID = $message->GetFrom("jid");
-  return unless &CheckFlag($fromJID->GetJID(),"rss");
+  return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
   my ($password,$name) = ($args =~ /^\s*(\S+)\s+(\S+)\s*$/);
 
   return ($message->GetType(),"The command was in error.")
     if !defined($password);
   return ($message->GetType(),"Permission denied.")
-    unless &CheckPassword("rss",$password);
+    unless &CheckPassword("feedreader",$password);
 
-  #delete $sources{lc($name)}; 
+  #delete $sources{lc($name)};
   return ($message->GetType(),"Sucessfully unsubscribed from $name.");
 }
 
-sub plugin_rss_dotick {
-  log3("tick");
+# ###
+# TICK
+# ###
+sub plugin_feed_dotick {
+  $Debug->Log0("feed tick");
 	
   # loop sources
   foreach my $url (sort (keys %sources)) {
-    log2("checking $url");
+    $Debug->Log0("checking $url");
 
     my $req = $ua->get($url);
     if (!$req->is_success) {
-      log3($req->status_line);
+      $Debug->Log1($req->status_line);
       next;
     }
 
@@ -197,28 +210,25 @@ sub plugin_rss_dotick {
       $rss->parse($req->content);
     };
     if ($@) { ### catch ###
-      log1("Malformed XML on source $url:".$@);
+      $Debug->Log0("Malformed XML on source $url:".$@);
       next;
     }
 		
     my @items = @{$rss->{items}};
-    log3("got ".@items." items");
+    $Debug->Log1("got ".@items." items");
 
     # Discover any new items
-    log3("Looking for new items");
+    $Debug->Log1("Looking for new items");
 
     my %temp_items = ();
-    log3("after reset");
     # Deterimine & record whether this is a new url.
     my $new_url = 0;
-    log3("after new init");
     if (exists $cache{$url}) {
-      log3("Not new url");
+      $Debug->Log1("Not new url");
     } else {
-      log3("New url");
+      $Debug->Log1("New url");
       $new_url = 1;
     }
-    log3("Iterating.");
 
     foreach my $item (@items) {
       my $key = $item->{title};
@@ -229,7 +239,7 @@ sub plugin_rss_dotick {
       if ($new_url or not exists $cache{$url}->{$key}) {
 				# New item.
 	
-        log2("New item from $url - $key");
+        $Debug->Log1("New item from $url - $key");
 
         # Broadcast the message, IFF this isn't our first encounter
         # with this url.
@@ -258,41 +268,14 @@ sub plugin_rss_dotick {
     foreach my $key (keys(%$cached_items)) {
       delete $cached_items->{$key} 
         unless defined($temp_items{$key});
-      log1("Killing ${url}'s cache for $key.")
+      $Debug->Log0("Killing ${url}'s cache for $key.")
         unless defined($temp_items{$key});
     }
 
     $cache{$url} = $cached_items;
-										
   }
-	
-  &ScheduleNextTick();
+
+  &RegisterTimingEvent(time+RSS_DELAY,"feed_tick",\&plugin_feed_dotick);
 }
 
-sub ScheduleNextTick {
-  &RegisterTimingEvent(time+RSS_DELAY,"rss_tick",\&plugin_rss_dotick);
-}
-
-# ###
-# da bug
-# ###
-sub log1 {
-  # WARN
-  my $msg = shift;
-  return unless VERBOSE >= 1;
-  print STDERR "WARN: $msg\n";
-}
-
-sub log2 {
-  # INFO
-  my $msg = shift;
-  return unless VERBOSE >= 2;
-  print "INFO: $msg\n";
-}
-
-sub log3 {
-  # DBUG
-  my $msg = shift;
-  return unless VERBOSE >= 3;
-  print "DBUG: $msg\n";
-}
+1;
