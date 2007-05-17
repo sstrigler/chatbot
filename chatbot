@@ -812,6 +812,15 @@ sub PluginInit
         print STDERR "PluginInit failed for $name: $@\n";
       }
     }
+    &RegisterFlag($plugins{$name}->{flag})
+      if (exists($plugins{$name}->{flag}));
+    if (exists($plugins{$name}->{commands}) &&
+        ref($plugins{$name}->{commands}) eq 'ARRAY') {
+      foreach (@{$plugins{$name}->{commands}}) {
+        print "loading command ".$_->{command}."\n";
+        &RegisterCommand(%{$_});
+      }
+    }
   }
 
 ##############################################################################
@@ -830,6 +839,15 @@ sub PluginFinalize
         print STDERR "PluginFinalize failed for $name: $@\n";
       }
     }
+    &UnRegisterFlag($plugins{$name}->{flag})
+      if (exists($plugins{$name}->{flag}));
+    if (exists($plugins{$name}->{commands}) &&
+        ref($plugins{$name}->{commands}) eq 'ARRAY') {
+      foreach (@{$plugins{$name}->{commands}}) {
+        print "unloading command ".$_->{command}."\n";
+        &UnRegisterCommand(%{$_});
+      }
+    }
   }
 
 ##############################################################################
@@ -844,6 +862,18 @@ sub RegisterEvent
 
     push(@{$events{$type}},$handler);
 }
+
+sub UnRegisterEvent
+  {
+    my $type = shift;
+    my $handler = shift;
+
+    my @newevents;
+    foreach (@{$events{$type}}) {
+      push @newevents, $_ unless $_ == $handler;
+    }
+    @{$events{$type}} = @newevents;
+  }
 
 ##############################################################################
 #
@@ -1050,6 +1080,25 @@ sub RegisterCommand
                   $args{desc},
                   $args{examples})
 }
+sub UnRegisterCommand
+  {
+    my (%args) = @_;
+    $args{alias} = "" unless exists($args{alias});
+    $args{usage} = "" unless exists($args{usage});
+    $args{desc} = "" unless exists($args{desc});
+    $args{examples} = [] unless exists($args{examples});
+
+    &UnRegisterEvent("command_".$args{command},$args{handler});
+    &UnRegisterEvent("command_".$args{alias},$args{handler})
+      unless ($args{alias} eq "");
+    &TriggerEvent("un_register_help",
+                  "",
+                  $args{command},
+                  $args{alias},
+                  $args{usage},
+                  $args{desc},
+                  $args{examples})
+  }
 
 
 ##############################################################################
@@ -1142,7 +1191,10 @@ sub RegisterFlag
 
     $flags{$flag} = 1;
 }
-
+sub UnRegisterFlag
+  {
+    delete $flags{shift};
+  }
 
 ##############################################################################
 #
