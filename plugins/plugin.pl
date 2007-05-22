@@ -19,7 +19,7 @@
 
 ##############################################################################
 #
-# ChatBot Plugin PlugIn - enables chatbot to (re)load plugins
+# ChatBot Plugin PlugIn - enables chatbot to (re)load plugins (hot deployment)
 #
 # Plugins are automatically being reloaded if a change of the file is
 # being detected. The Plugin must use the new RegisterPlugin call if
