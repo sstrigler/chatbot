@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 #
-# feedreader.pl - chatbot plugin for handling rss feeds
+# feedreader.pl - chatbot plugin for handling (rss) feeds
+# adopted from janchor.pl by Jeremy Nickurak, 2002
 #
 # Copyright (c) 2005-2007 Stefan Strigler <steve@zeank.in-berlin.de>
 #
@@ -17,11 +18,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-#
-# adopted from janchor.pl by Jeremy Nickurak, 2002
 
 # BEGIN EXTRA CONFIGURATION
-use constant RSS_DELAY => 10;     # Interval for RSS checks. Note that
+use constant RSS_DELAY => 10;    # Interval for RSS checks. Note that
                                  # many sites will be very upset if
                                  # you use less then a 30 minute
                                  # delay, notably, slashdot.
@@ -62,17 +61,18 @@ my %status;
                 flag     => 'feedreader',
                 init     => \&plugin_feedreader_init,
                 finalize => \&plugin_feedreader_finalize,
-                commands => [{command=>"!feed_list",
-                              handler=>\&plugin_feed_list,
-                              desc=>"list subscribed feeds"},
-                             {command=>"!feed_subscribe",
-                              handler=>\&plugin_feed_subscribe,
-                              desc=>"subscribe feed",
-                              usage=>"<password> <name> <url>"},
-                             {command=>"!feed_unsubscribe",
-                              handler=>\&plugin_feed_unsubscribe,
-                              desc=>"unsubscribe feed".
-                              usage=>"<password> <name>"}]);
+                commands =>
+                [{command=>"!feed_list",
+                  handler=>\&plugin_feed_list,
+                  desc=>"list subscribed feeds"},
+                 {command=>"!feed_subscribe",
+                  handler=>\&plugin_feed_subscribe,
+                  desc=>"subscribe feed",
+                  usage=>"<password> <name> <url>"},
+                 {command=>"!feed_unsubscribe",
+                  handler=>\&plugin_feed_unsubscribe,
+                  desc=>"unsubscribe feed".
+                  usage=>"<password> <name>"}]);
 
 # ###
 # INIT
@@ -152,14 +152,12 @@ sub plugin_feed_subscribe {
     $sub{$fromJID->GetJID()}->{$url} = $name;
     log2(Data::Dumper->Dump([$sub{$fromJID->GetJID()}]));
   } else {
-    my %feeds = ($url => $name);
-    $sub{$fromJID->GetJID()} = \%feeds;
+    %{$sub{$fromJID->GetJID()}} = {$url => $name};
   }
 
-  $sources{$url} = (
-     'errors' => 0,
-     'last' => 0)
-  unless (grep $url, keys %sources);
+  $sources{$url} = {'errors' => 0,
+                    'last' => 0}
+    unless (grep $url, keys %sources);
 
   # run schedular to fetch this one
   &ClearTimingEvent('feed_tick');
