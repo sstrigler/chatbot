@@ -53,7 +53,6 @@ my %Stat;
 ##############################################################################
 sub plugin_plugin_init
   {
-    $Debug->Log0("plugin_plugin_init");
     &RegisterTimingEvent(time,"plugin_plugin_tick",\&plugin_plugin_tick);
   }
 ##############################################################################
@@ -63,7 +62,6 @@ sub plugin_plugin_init
 ##############################################################################
 sub plugin_plugin_finalize
   {
-    $Debug->Log0("plugin_plugin_finalize");
     &ClearTimingEvent("plugin_plugin_tick");
   }
 
@@ -103,7 +101,6 @@ sub plugin_plugin_load
 ##############################################################################
 sub plugin_plugin_tick
   {
-    
     my $c=0;
     while (my($key,$file) = each %INC) {
       next if $file eq 
