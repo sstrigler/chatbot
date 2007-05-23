@@ -20,21 +20,27 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 # BEGIN EXTRA CONFIGURATION
-use constant RSS_DELAY => 10;    # Interval for RSS checks. Note that
-                                 # many sites will be very upset if
-                                 # you use less then a 30 minute
-                                 # delay, notably, slashdot.
-use constant RSS_TIMEOUT => 15;  # Timeout for HTTP connections to RSS
-                                 # sources
-use constant SUB_FILE     => 'feedreader_sub';       # Subscription DB
-use constant CACHE_FILE   => 'feedreader_cache';     # RSS Cache DB
-use constant SOURCE_FILE  => 'feedreader_sources';   # Source DB
-use constant STATUS_FILE  => 'feedreader_status';    # Source Status DB
+
+# Interval for RSS checks in seconds. Note that many sites will be
+# very upset if you use less then a 30 minute delay, notably,
+# slashdot.
+use constant RSS_DELAY => 10;
+
+# Timeout for HTTP connections to RSS sources
+use constant RSS_TIMEOUT => 15;
+
+# RSS Cache DB
+use constant CACHE_FILE   => 'feedreader_cache';
+
+# Source DB
+use constant SOURCE_FILE  => 'feedreader_sources';
 
 # END EXTRA CONFIGURATION
+
+
 use constant VERSION	=> '1.0';
 use Data::Dumper;
-use MLDBM 'DB_File';
+use MLDBM qw(DB_File Storable);
 use Text::Iconv;
 use LWP::UserAgent;
 use XML::RSS;
@@ -49,10 +55,8 @@ my $ua;
 # ###
 # DB-tied hashes
 # ###
-my %sub;
 my %cache;
 my %sources;
-my %status;
 
 # ###
 # register plugin
@@ -63,31 +67,28 @@ my %status;
                 finalize => \&plugin_feedreader_finalize,
                 commands =>
                 [{command=>"!feed_list",
+                  alias=>"!fl",
                   handler=>\&plugin_feed_list,
                   desc=>"list subscribed feeds"},
                  {command=>"!feed_subscribe",
+                  alias=>"!fs",
                   handler=>\&plugin_feed_subscribe,
                   desc=>"subscribe feed",
                   usage=>"<password> <name> <url>"},
                  {command=>"!feed_unsubscribe",
+                  alias=>"!fu",
                   handler=>\&plugin_feed_unsubscribe,
                   desc=>"unsubscribe feed".
-                  usage=>"<password> <name>"}]);
+                  usage=>"<password> <url>"}]);
 
 # ###
 # INIT
 # ###
 sub plugin_feedreader_init {
-  $Debug->Log0("feedreader starting ...");
-
-  tie (%sub, 'MLDBM', SUB_FILE) or 
-    die ("Cannot tie to " . SUB_FILE."!\n");
   tie (%cache, 'MLDBM', CACHE_FILE) or 
     die ("Cannot tie to " . CACHE_FILE."!\n");
   tie (%sources, 'MLDBM', SOURCE_FILE) or 
     die ("Cannot tie to " . SOURCE_FILE."!\n");
-  tie (%status, 'MLDBM', STATUS_FILE) or 
-    die ("Cannot tie to " . STATUS_FILE."!\n");
 
   $ua = new LWP::UserAgent(timeout=>RSS_TIMEOUT);
 
@@ -98,34 +99,31 @@ sub plugin_feedreader_init {
 # FINALIZE
 # ###
 sub plugin_feedreader_finalize {
-  $Debug->Log0("feedreader exiting ...");
-
   ClearTimingEvent("feed_tick");
 	
-  untie %sub;
   untie %cache;
   untie %sources;
-  untie %status;
 }
 
 # ###
 # LIST
 # ###
 sub plugin_feed_list {
-  $Debug->Log0("feed list");
   my $message = shift;
 
   my $fromJID = $message->GetFrom("jid");
   return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
-  my $txt = '';
-  if (exists($sub{$fromJID->GetJID()})) {
-    foreach (keys %{$sub{$fromJID->GetJID()}}) {
-      $txt .= $sub{$fromJID->GetJID()}->{$_}.': '.$_."\n";
-    }
-  } else {
-    $txt = "You're not subscribed to any feed";
+  my $header = $fromJID->GetJID()." is subscribed to:";
+  my $txt = $header;
+
+  foreach my $feed (keys %sources) {
+    $txt .= "\n" . $sources{$feed}->{$fromJID->GetJID()} . ": " . $feed
+      if (exists($sources{$feed}->{$fromJID->GetJID()}));
   }
+
+  $txt = $fromJID->GetJID()." is not subscribed to any feed"
+    if ($txt eq $header);
 
   return ($message->GetType(),$txt);
 }
@@ -140,30 +138,26 @@ sub plugin_feed_subscribe {
   my $fromJID = $message->GetFrom("jid");
   return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
-  my ($password,$name,$url) = ($args =~ /^\s*(\S+)\s+(\S+)\s+(\S+)\s*$/);
+  my ($password,$name,$feed) = ($args =~ /^\s*(\S+)\s+(\S+)\s+(\S+)\s*$/);
 	
   return ($message->GetType(),"The command was in error.")
     if !defined($password);
   return ($message->GetType(),"Permission denied.")
     unless &CheckPassword("feedreader",$password);
-	
-  if (exists($sub{$fromJID->GetJID()})) {
-    my %feeds = ($url => $name);
-    $sub{$fromJID->GetJID()}->{$url} = $name;
-    log2(Data::Dumper->Dump([$sub{$fromJID->GetJID()}]));
+
+  if (exists($sources{$feed})) {
+    my $tmp = $sources{$feed};
+    $tmp->{$fromJID->GetJID()} = $name;
+    $sources{$feed} = $tmp
   } else {
-    %{$sub{$fromJID->GetJID()}} = {$url => $name};
+    $sources{$feed} = {$fromJID->GetJID() => $name};
   }
 
-  $sources{$url} = {'errors' => 0,
-                    'last' => 0}
-    unless (grep $url, keys %sources);
-
-  # run schedular to fetch this one
+  # run scheduler to fetch this one
   &ClearTimingEvent('feed_tick');
   &RegisterTimingEvent(time,"feed_tick",\&plugin_feed_dotick);
 
-  return ($message->GetType(),"Sucessfully added $name ($url).");
+  return ($message->GetType(),"Sucessfully subscribed to $feed as $name.");
 }
 
 # ###
@@ -176,28 +170,38 @@ sub plugin_feed_unsubscribe {
   my $fromJID = $message->GetFrom("jid");
   return unless &CheckFlag($fromJID->GetJID(),"feedreader");
 
-  my ($password,$name) = ($args =~ /^\s*(\S+)\s+(\S+)\s*$/);
+  my ($password, $feed) = ($args =~ /^\s*(\S+)\s+(\S+)\s*$/);
 
   return ($message->GetType(),"The command was in error.")
     if !defined($password);
   return ($message->GetType(),"Permission denied.")
     unless &CheckPassword("feedreader",$password);
 
-  #delete $sources{lc($name)};
-  return ($message->GetType(),"Sucessfully unsubscribed from $name.");
+  return ($message->GetType(),"No such feed: $feed.")
+    unless exists $sources{$feed};
+
+  return ($message->GetType(),
+          $fromJID->GetJID()." is not subscribed to $feed.")
+    unless exists $sources{$feed}->{$fromJID->GetJID()};
+
+  my $tmp = $sources{$feed};
+  delete $tmp->{$fromJID->GetJID()};
+  $sources{$feed} = $tmp;
+
+  delete $sources{$feed} unless (keys %{$sources{$feed}});
+
+  return ($message->GetType(),"Sucessfully unsubscribed from $feed.");
 }
 
 # ###
 # TICK
 # ###
-sub plugin_feed_dotick {
-  $Debug->Log0("feed tick");
-	
+sub plugin_feed_dotick {	
   # loop sources
-  foreach my $url (sort (keys %sources)) {
-    $Debug->Log0("checking $url");
+  foreach my $feed (keys %sources) {
+    $Debug->Log0("checking $feed");
 
-    my $req = $ua->get($url);
+    my $req = $ua->get($feed);
     if (!$req->is_success) {
       $Debug->Log1($req->status_line);
       next;
@@ -208,7 +212,7 @@ sub plugin_feed_dotick {
       $rss->parse($req->content);
     };
     if ($@) { ### catch ###
-      $Debug->Log0("Malformed XML on source $url:".$@);
+      $Debug->Log0("Malformed XML on source $feed:".$@);
       next;
     }
 		
@@ -220,57 +224,52 @@ sub plugin_feed_dotick {
 
     my %temp_items = ();
     # Deterimine & record whether this is a new url.
-    my $new_url = 0;
-    if (exists $cache{$url}) {
-      $Debug->Log1("Not new url");
-    } else {
-      $Debug->Log1("New url");
-      $new_url = 1;
-    }
+    my $new_url = exists $cache{$feed} ? 0 : 1;
 
     foreach my $item (@items) {
       my $key = $item->{title};
       $key = $item->{url} unless $key;
-      $key = $url unless $key;
+      $key = $feed unless $key;
       $temp_items{$key} = 1;
-      delete $cache{$url} unless (ref($cache{$url}) eq 'HASH');
-      if ($new_url or not exists $cache{$url}->{$key}) {
-				# New item.
+      delete $cache{$feed} unless (ref($cache{$feed}) eq 'HASH');
+      if ($new_url or not exists $cache{$feed}->{$key}) {
+        # New item.
 	
-        $Debug->Log1("New item from $url - $key");
+        $Debug->Log1("New item from $feed - $key");
 
         # Broadcast the message, IFF this isn't our first encounter
         # with this url.
         if (not $new_url) {
           my @channels = &Channels();
           foreach my $chan (@channels) {
-            next unless &CheckFlag($chan,"rss");
+            next unless &CheckFlag($chan,"feedreader");
+            next unless exists($sources{$feed}->{$chan});
             my $msg = new Net::Jabber::Message();
             $msg->SetMessage(type=>'groupchat',
-                           body =>("[".$sub{$chan}->{$url}."] ".
-                                   $item->{title}."\n".$item->{link}));
+                             body =>("[".$sources{$feed}->{$chan}."] ".
+                                     $item->{title}."\n".$item->{link}));
             $msg->SetTo($chan);
             &Send($msg);
           }
         }
 
         # Remember that we've seen it.
-        my $element = $cache{$url};
+        my $element = $cache{$feed};
         $element->{$key} = 1;
-        $cache{$url} = $element;
+        $cache{$feed} = $element;
       }
     }
 
     # Forget cached items that have since been removed from their source.
-    my $cached_items = $cache{$url};
+    my $cached_items = $cache{$feed};
     foreach my $key (keys(%$cached_items)) {
       delete $cached_items->{$key} 
         unless defined($temp_items{$key});
-      $Debug->Log0("Killing ${url}'s cache for $key.")
+      $Debug->Log0("Killing ${feed}'s cache for $key.")
         unless defined($temp_items{$key});
     }
 
-    $cache{$url} = $cached_items;
+    $cache{$feed} = $cached_items;
   }
 
   &RegisterTimingEvent(time+RSS_DELAY,"feed_tick",\&plugin_feed_dotick);
