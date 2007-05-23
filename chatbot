@@ -1269,7 +1269,7 @@ sub JoinChannel
     $channel{$jid->GetJID()}->{jid} = $jid;
 
     $Client->PresenceSend(to=>$jid);
-    $Debug->Log0("Sent presence to ",$channel{$jid}->{jid}->GetJID("full"));
+    $Debug->Log0("Sent presence to ",$channel{$jid->GetJID()}->{jid}->GetJID("full"));
 
     &saveChannelsXML();
 }
