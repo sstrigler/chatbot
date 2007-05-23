@@ -24,7 +24,7 @@
 # Interval for RSS checks in seconds. Note that many sites will be
 # very upset if you use less then a 30 minute delay, notably,
 # slashdot.
-use constant RSS_DELAY => 10;
+use constant RSS_DELAY => 1800;
 
 # Timeout for HTTP connections to RSS sources
 use constant RSS_TIMEOUT => 15;
