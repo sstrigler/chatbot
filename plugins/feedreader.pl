@@ -188,7 +188,10 @@ sub plugin_feed_unsubscribe {
   delete $tmp->{$fromJID->GetJID()};
   $sources{$feed} = $tmp;
 
-  delete $sources{$feed} unless (keys %{$sources{$feed}});
+  unless (keys %{$sources{$feed}}) {
+    delete $sources{$feed};
+    delete $cache{$feed};
+  }
 
   return ($message->GetType(),"Sucessfully unsubscribed from $feed.");
 }
