@@ -2,11 +2,11 @@
   <channel>
     <flags>
       <dice/>
+      <feedreader/>
       <join/>
       <last/>
       <query/>
       <role/>
-			<rss/>
       <seen/>
       <url/>
     </flags>
