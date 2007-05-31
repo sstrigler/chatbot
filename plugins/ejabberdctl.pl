@@ -60,7 +60,7 @@ sub plugin_ejabberdctl {
   my $args = shift;
 
   my $fromJID = $message->GetFrom("jid");
-  return unless &CheckFlag($fromJID->GetJID(),"feedreader");
+  return unless &CheckFlag($fromJID->GetJID(),"ejabberdctl");
 
   my ($password,$node,$command) = ($args =~ /^\s*(\S+)\s+(\S+)\s+(.+)$/);
 
