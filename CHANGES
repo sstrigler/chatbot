@@ -1,3 +1,9 @@
+3.0
+===
+  - don't crash on executing plugin callbacks
+  - plugin.pl: plugin hot deployment (new API!)
+  - feedreader.pl: have feeds with your rooms
+
 2.0
 ===
   - Added an optional timezone to the time plugin.
