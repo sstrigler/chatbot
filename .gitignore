@@ -1,4 +1,5 @@
 *.xml
 eliza_deutsch.txt
 feedreader_*
-
+spool
+logs
